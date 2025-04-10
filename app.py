@@ -6,7 +6,7 @@ import os
 from admin_utils import (
     login_admin, logout_admin, is_admin_logged_in, upload_excel_file,
     save_dataframe_to_csv, edit_record, create_new_record, delete_record,
-    create_sample_excel
+    create_sample_excel, verify_password
 )
 
 # Configurazione pagina Streamlit
@@ -60,6 +60,12 @@ def load_data():
         # Pulizia dei dati
         # Filtra le righe che hanno almeno l'orario compilato e non vuoto
         df = df[df['Orario'].notna() & (df['Orario'] != '')]
+        
+        # Rimuovi i decimali dai codici insegnamento
+        if 'Codice insegnamento' in df.columns:
+            df['Codice insegnamento'] = df['Codice insegnamento'].astype(str).apply(
+                lambda x: x.split('.')[0] if '.' in x else x
+            )
         
         # Gestione delle date
         def parse_date(date_str):
@@ -178,6 +184,35 @@ if df is not None:
         default=modalita[:2]  # P e D selezionate di default
     )
     
+    # Separatore per la sezione di login
+    st.sidebar.markdown("---")
+    st.sidebar.header("👤 Accesso Amministratore")
+    
+    # Inizializza lo stato della sessione se non esiste
+    if 'admin_logged_in' not in st.session_state:
+        st.session_state.admin_logged_in = False
+    
+    # Form di login nella sidebar
+    if not is_admin_logged_in():
+        password = st.sidebar.text_input("Password", type="password", key="admin_password")
+        login_button = st.sidebar.button("Login")
+        
+        if login_button:
+            if verify_password(password):
+                st.session_state.admin_logged_in = True
+                st.sidebar.success("Accesso effettuato! Vai alla pagina di amministrazione.")
+                st.rerun()
+            else:
+                st.sidebar.error("Password errata!")
+    else:
+        st.sidebar.success("Accesso effettuato come amministratore")
+        st.sidebar.info("Vai alla pagina di Amministrazione utilizzando il menu in alto")
+        
+        # Pulsante di logout
+        if st.sidebar.button("Logout"):
+            logout_admin()
+            st.rerun()
+    
     # Applica filtri
     filtered_df = df.copy()
     
@@ -247,162 +282,38 @@ if df is not None:
                 
         # Statistiche
         st.subheader("Statistiche")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.write("Lezioni per Dipartimento")
-            dipartimento_stats = filtered_df['Dipartimento'].value_counts().reset_index()
-            dipartimento_stats.columns = ['Dipartimento', 'CFU']
-            st.dataframe(dipartimento_stats, use_container_width=True, hide_index=True)
-        
-        with col2:
-            st.write("Lezioni per Docente")
-            docente_stats = filtered_df['Docente'].value_counts().head(10).reset_index()
-            docente_stats.columns = ['Docente', 'CFU']
-            st.dataframe(docente_stats, use_container_width=True, hide_index=True)
             
         # Statistiche per denominazione insegnamento
         st.write("Lezioni per Insegnamento")
         insegnamento_stats = filtered_df['Denominazione Insegnamento'].value_counts().reset_index()
         insegnamento_stats.columns = ['Insegnamento', 'CFU']
         st.dataframe(insegnamento_stats, use_container_width=True, hide_index=True)
+        
+        # Statistiche per classe di concorso
+        st.write("Lezioni per Classe di Concorso")
+        classe_concorso_stats = filtered_df['Classe di concorso'].value_counts().reset_index()
+        classe_concorso_stats.columns = ['Classe di Concorso', 'CFU']
+        st.dataframe(classe_concorso_stats, use_container_width=True, hide_index=True)
+        
+        # Memorizza le statistiche dei docenti per uso nella sezione admin
+        st.session_state['docente_stats'] = filtered_df['Docente'].value_counts().head(10).reset_index()
+        st.session_state['docente_stats'].columns = ['Docente', 'CFU']
 
 else:
     st.error("Errore nel caricamento dei dati. Controlla che il file CSV sia presente e formattato correttamente.")
 
-# Sezione amministrativa
+# Sezione amministrativa - Link alla pagina dedicata
 st.markdown("---")
 st.header("Sezione Amministratore")
 
-# Inizializza lo stato della sessione se non esiste
-if 'admin_logged_in' not in st.session_state:
-    st.session_state.admin_logged_in = False
-
-if 'admin_data' not in st.session_state:
-    st.session_state.admin_data = None
-
-if 'edit_mode' not in st.session_state:
-    st.session_state.edit_mode = False
-    st.session_state.edit_index = None
-
-# Gestione login/logout
-if not is_admin_logged_in():
-    login_admin()
-else:
-    # Mostra il pulsante di logout
-    if st.button("Logout Amministratore"):
-        logout_admin()
-        st.rerun()
-    
+# Visualizza informazioni sullo stato di login
+if is_admin_logged_in():
     st.success("Accesso effettuato come amministratore")
+    st.info("👉 Utilizza la pagina 'Amministrazione' dal menu di navigazione per accedere a tutte le funzioni amministrative.")
+else:
+    st.info("Per accedere alle funzionalità di amministrazione, effettua il login utilizzando il form nella barra laterale.")
     
-    # Tabs per separare le diverse funzionalità
-    admin_tab1, admin_tab2, admin_tab3 = st.tabs(["Importa dati", "Gestione record", "Scarica esempi"])
-    
-    with admin_tab1:
-        st.subheader("Importazione massiva da Excel")
-        st.write("Carica un file Excel contenente i dati del calendario. Il file deve avere la stessa struttura del file di esempio.")
-        
-        # Upload del file Excel
-        uploaded_df = upload_excel_file()
-        
-        if uploaded_df is not None:
-            st.write("Anteprima dei dati caricati:")
-            st.dataframe(uploaded_df.head(10))
-            
-            if st.button("Salva dati importati"):
-                file_path = save_dataframe_to_csv(uploaded_df)
-                st.success(f"Dati salvati con successo nel file: {file_path}")
-                st.info("Ricarica la pagina per vedere i nuovi dati")
-    
-    with admin_tab2:
-        st.subheader("Gestione dei record")
-        st.write("Puoi modificare, aggiungere o eliminare singoli record del calendario.")
-        
-        # Carica i dati se non sono già in memoria
-        if df is not None:
-            admin_df = df.copy()
-            
-            # Mostra la tabella con i dati attuali
-            if not st.session_state.edit_mode:
-                st.write("Dati attuali:")
-                
-                # Crea una versione visualizzabile del dataframe con indice
-                display_df = admin_df.copy()
-                display_df['Data'] = display_df['Data'].dt.strftime('%a %d %b %Y')
-                
-                # Visualizza solo le colonne principali per compattezza
-                compact_cols = ['Data', 'Orario', 'Dipartimento', 'Denominazione Insegnamento', 'Docente']
-                
-                # Aggiungi un indice per la selezione
-                st.dataframe(display_df[compact_cols], use_container_width=True)
-                
-                # Input per selezionare un record da modificare
-                col1, col2, col3 = st.columns(3)
-                
-                with col1:
-                    record_index = st.number_input("Indice del record da modificare:", 
-                                                min_value=0, 
-                                                max_value=len(admin_df)-1 if len(admin_df) > 0 else 0,
-                                                value=0)
-                    if st.button("Modifica record"):
-                        st.session_state.edit_mode = True
-                        st.session_state.edit_index = record_index
-                        st.rerun()
-                
-                with col2:
-                    if st.button("Aggiungi nuovo record"):
-                        st.session_state.edit_mode = True
-                        st.session_state.edit_index = -1  # -1 indica un nuovo record
-                        st.rerun()
-                
-                with col3:
-                    if st.button("Elimina record"):
-                        if len(admin_df) > 0:
-                            admin_df = delete_record(admin_df, record_index)
-                            # Salva i dati aggiornati
-                            save_dataframe_to_csv(admin_df)
-                            st.info("Ricarica la pagina per vedere i dati aggiornati")
-            
-            else:
-                # Modalità di modifica
-                if st.session_state.edit_index == -1:
-                    # Aggiunta di un nuovo record
-                    updated_df = create_new_record(admin_df)
-                    
-                    if st.button("Torna alla lista"):
-                        st.session_state.edit_mode = False
-                        st.rerun()
-                    
-                    admin_df = updated_df
-                    # Salva i dati aggiornati
-                    save_dataframe_to_csv(admin_df)
-                else:
-                    # Modifica di un record esistente
-                    updated_df = edit_record(admin_df, st.session_state.edit_index)
-                    
-                    if st.button("Torna alla lista"):
-                        st.session_state.edit_mode = False
-                        st.rerun()
-                    
-                    admin_df = updated_df
-                    # Salva i dati aggiornati
-                    save_dataframe_to_csv(admin_df)
-                
-    with admin_tab3:
-        st.subheader("File di esempio")
-        st.write("Scarica un file Excel di esempio per l'importazione dei dati.")
-        
-        if st.button("Genera file di esempio"):
-            example_file = create_sample_excel()
-            st.success(f"File di esempio creato: {example_file}")
-            
-            # Crea un link per il download
-            with open(example_file, "rb") as file:
-                btn = st.download_button(
-                    label="Scarica file di esempio",
-                    data=file,
-                    file_name="esempio_caricamento.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
+# Memorizza le statistiche dei docenti per uso nella sezione admin
+if df is not None and 'filtered_df' in locals():
+    st.session_state['docente_stats'] = filtered_df['Docente'].value_counts().head(10).reset_index()
+    st.session_state['docente_stats'].columns = ['Docente', 'CFU']

@@ -16,8 +16,8 @@ def login_admin() -> bool:
     """Gestisce il login dell'amministratore."""
     st.subheader("Login Amministratore")
     
-    password = st.text_input("Password", type="password")
-    login_button = st.button("Login")
+    password = st.text_input("Password", type="password", key="admin_login_password")
+    login_button = st.button("Login", key="admin_login_button")
     
     if login_button:
         if verify_password(password):
@@ -46,14 +46,25 @@ def upload_excel_file() -> Union[pd.DataFrame, None]:
             # Leggi il file Excel
             df = pd.read_excel(uploaded_file, skiprows=3)
             
-            # Rinomina le colonne
-            columns = [
+            # Rinomina le colonne - Assicurati che ci siano tutte le 16 colonne di base
+            base_columns = [
                 'Data', 'Orario', 'Dipartimento', 'Classe di concorso',
                 'Insegnamento comune', 'PeF60 all.1', 'PeF30 all.2', 'PeF36 all.5', 'PeF30 art.13',
                 'Codice insegnamento', 'Denominazione Insegnamento', 'Docente',
                 'Aula', 'Link Teams', 'CFU', 'Note'
             ]
-            df.columns = columns
+            
+            # Assegna le colonne e gestisci il caso in cui ci siano colonne mancanti o troppe
+            if len(df.columns) <= len(base_columns):
+                # Se ci sono meno colonne del previsto, assegna solo le prime disponibili
+                df.columns = base_columns[:len(df.columns)]
+                # Aggiungi colonne mancanti con valori nulli
+                for col in base_columns[len(df.columns):]:
+                    df[col] = None
+            else:
+                # Se ci sono più colonne del previsto, assegna le prime 16 e ignora il resto
+                df = df.iloc[:, :len(base_columns)]
+                df.columns = base_columns
             
             # Imposta la localizzazione italiana per le date
             import locale
@@ -150,17 +161,36 @@ def save_dataframe_to_csv(df: pd.DataFrame, path: str = 'dati') -> str:
     file_path = os.path.join(path, file_name)
 
     try:
+        # Assicurati che il dataframe abbia tutte le colonne necessarie
+        required_columns = [
+            'Data', 'Orario', 'Dipartimento', 'Classe di concorso',
+            'Insegnamento comune', 'PeF60 all.1', 'PeF30 all.2', 'PeF36 all.5', 'PeF30 art.13',
+            'Codice insegnamento', 'Denominazione Insegnamento', 'Docente',
+            'Aula', 'Link Teams', 'CFU', 'Note', 'Giorno', 'Mese', 'Anno'
+        ]
+        
+        # Verifica che tutte le colonne richieste siano presenti
+        for col in required_columns:
+            if col not in df.columns:
+                df[col] = None
+        
         # Leggi il file esistente se presente
         if os.path.exists(file_path):
             existing_df = pd.read_csv(file_path, delimiter=';', encoding='utf-8', skiprows=3)
-            existing_df.columns = [
-                'Data', 'Orario', 'Dipartimento', 'Classe di concorso',
-                'Insegnamento comune', 'PeF60 all.1', 'PeF30 all.2', 'PeF36 all.5', 'PeF30 art.13',
-                'Codice insegnamento', 'Denominazione Insegnamento', 'Docente',
-                'Aula', 'Link Teams', 'CFU', 'Note'
-            ]
-
-            # Assicurati che le date siano nel formato corretto
+            
+            # Assicurati che il dataframe esistente abbia tutte le colonne richieste
+            if len(existing_df.columns) == len(required_columns):
+                existing_df.columns = required_columns
+            else:
+                # Se il numero di colonne non corrisponde, fissa le colonne esistenti
+                existing_cols = min(len(existing_df.columns), len(required_columns))
+                existing_df.columns = required_columns[:existing_cols]
+                
+                # Aggiungi le colonne mancanti
+                for col in required_columns[existing_cols:]:
+                    existing_df[col] = None
+            
+            # Standardizza le date nei dataframe esistente e nuovo
             def format_date(date_str):
                 if pd.isna(date_str):
                     return None
@@ -177,9 +207,10 @@ def save_dataframe_to_csv(df: pd.DataFrame, path: str = 'dati') -> str:
                     except:
                         return None
 
-            # Standardizza le date nei dataframe esistente e nuovo
-            existing_df['Data'] = existing_df['Data'].apply(format_date)
-            df['Data'] = df['Data'].apply(format_date)
+            # Standardizza le date nei dataframe esistente e nuovo se necessario
+            if 'Data' in existing_df.columns and 'Data' in df.columns:
+                existing_df['Data'] = existing_df['Data'].apply(format_date)
+                df['Data'] = df['Data'].apply(format_date)
 
             # Combina i dati esistenti con i nuovi dati
             df = pd.concat([existing_df, df], ignore_index=True)
@@ -189,6 +220,12 @@ def save_dataframe_to_csv(df: pd.DataFrame, path: str = 'dati') -> str:
         
         # Rimuovi duplicati basati su colonne chiave
         df = df.drop_duplicates(subset=['Data', 'Orario', 'Docente', 'Denominazione Insegnamento'], keep='last')
+            
+        # Assicurati che i codici insegnamento siano trattati come stringhe senza decimali
+        if 'Codice insegnamento' in df.columns:
+            df['Codice insegnamento'] = df['Codice insegnamento'].astype(str).apply(
+                lambda x: x.split('.')[0] if '.' in x else x
+            )
 
         # Ordina il dataframe per data e orario
         df['Data_temp'] = pd.to_datetime(df['Data'], format='%A %d %B %Y', errors='coerce')
