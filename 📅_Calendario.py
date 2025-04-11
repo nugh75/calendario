@@ -49,13 +49,39 @@ def main():
             st.markdown("### 🔍 Filtra il Calendario")
             st.write("Utilizza i filtri sottostanti per visualizzare le lezioni di tuo interesse.")
             
-            # Filtro per periodo (mese e anno)
+            # Filtro per periodo (mese e intervallo di date)
             st.sidebar.subheader("📆 Periodo")
             mesi = sorted(df['Mese'].dropna().unique())
-            anni = sorted(df['Anno'].dropna().unique())
             
+            # Filtro per mese
             mese_selected = st.sidebar.multiselect("Seleziona mese:", mesi)
-            anno_selected = st.sidebar.multiselect("Seleziona anno:", anni)
+            
+            # Filtro per intervallo di date
+            st.sidebar.write("Oppure seleziona un intervallo di date:")
+            
+            # Determina le date minime e massime nel dataset
+            min_date = df['Data'].min().date() if not df['Data'].empty else datetime.now().date()
+            max_date = df['Data'].max().date() if not df['Data'].empty else datetime.now().date()
+            
+            # Filtro per intervallo di date
+            date_start = st.sidebar.date_input(
+                "Data inizio:",
+                value=min_date,
+                min_value=min_date,
+                max_value=max_date,
+                format="DD/MM/YYYY"
+            )
+            
+            date_end = st.sidebar.date_input(
+                "Data fine:",
+                value=max_date,
+                min_value=min_date,
+                max_value=max_date,
+                format="DD/MM/YYYY"
+            )
+            
+            # Checkbox per attivare il filtro per data
+            use_date_range = st.sidebar.checkbox("Filtra per intervallo di date")
             
             # Filtro per insegnamento
             st.sidebar.subheader("📚 Insegnamento")
@@ -85,9 +111,15 @@ def main():
         if mese_selected:
             filtered_df = filtered_df[filtered_df['Mese'].isin(mese_selected)]
         
-        # Filtro per anno
-        if anno_selected:
-            filtered_df = filtered_df[filtered_df['Anno'].isin(anno_selected)]
+        # Filtro per intervallo di date (se attivato)
+        if use_date_range:
+            # Converti date_start e date_end in oggetti Timestamp per confrontarli con df['Data']
+            date_start_ts = pd.Timestamp(date_start)
+            date_end_ts = pd.Timestamp(date_end)
+            
+            # Applica il filtro per intervallo di date
+            filtered_df = filtered_df[(filtered_df['Data'] >= date_start_ts) & 
+                                     (filtered_df['Data'] <= date_end_ts)]
         
         # Filtro per insegnamento
         if insegnamento_selected:
@@ -114,9 +146,33 @@ def main():
             display_df = filtered_df.copy()
             display_df['Data'] = display_df['Data'].apply(format_date)
             
-            # Seleziona colonne da visualizzare
-            display_columns = ['Data', 'Orario', 'Denominazione Insegnamento', 'Docente', 'Aula', 'Link Teams']
-            st.dataframe(display_df[display_columns], use_container_width=True)
+            # Colonne base che saranno sempre visualizzate
+            base_cols = ['Data', 'Orario', 'Dipartimento', 'Classe di concorso', 'Insegnamento comune', 
+                      'Codice insegnamento', 'Denominazione Insegnamento', 'Docente', 'Aula', 
+                      'Link Teams', 'CFU', 'Note']
+            
+            # Colonne dei percorsi formativi
+            pef_cols_map = {
+                "PeF60 (60 CFU)": "PeF60 all.1",
+                "PeF30 all.2 (30 CFU)": "PeF30 all.2", 
+                "PeF36 all.5 (36 CFU)": "PeF36 all.5",
+                "PeF30 art.13 (30 CFU)": "PeF30 art.13"
+            }
+            
+            # Seleziona colonne da visualizzare in base ai percorsi selezionati
+            view_cols = base_cols.copy()
+            
+            # Se nessun percorso è selezionato, mostra tutte le colonne dei percorsi
+            if not percorsi_selected:
+                view_cols = base_cols[:5] + list(pef_cols_map.values()) + base_cols[5:]
+            else:
+                # Aggiungi solo le colonne dei percorsi selezionati
+                percorsi_cols = [pef_cols_map[percorso] for percorso in percorsi_selected]
+                
+                # Inserisci le colonne dei percorsi nella posizione corretta (dopo 'Insegnamento comune')
+                view_cols = base_cols[:5] + percorsi_cols + base_cols[5:]
+            
+            st.dataframe(display_df[view_cols], use_container_width=True, height=400)
         else:
             st.warning("Nessun risultato trovato con i filtri selezionati.")
     else:
