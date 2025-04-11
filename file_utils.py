@@ -428,26 +428,26 @@ def edit_record(df: pd.DataFrame, index: int) -> pd.DataFrame:
     with col1:
         # Usa il formato data originale per la visualizzazione e modifica
         data_str = record['Data'].strftime('%A %d %B %Y') if pd.notna(record['Data']) else ""
-        new_data = st.text_input("Data (formato: lunedì 14 aprile 2025)", value=data_str)
+        new_data = st.text_input("Data (formato: lunedì 14 aprile 2025)", value=data_str, key=f"data_{index}")
         
-        new_orario = st.text_input("Orario (formato: 00:00-00:00)", value=record['Orario'] if pd.notna(record['Orario']) else "")
+        new_orario = st.text_input("Orario (formato: 00:00-00:00)", value=record['Orario'] if pd.notna(record['Orario']) else "", key=f"orario_{index}")
         
-        new_dipartimento = st.text_input("Dipartimento", value=record['Dipartimento'] if pd.notna(record['Dipartimento']) else "")
+        new_dipartimento = st.text_input("Dipartimento", value=record['Dipartimento'] if pd.notna(record['Dipartimento']) else "", key=f"dipartimento_{index}")
         
-        new_classe_concorso = st.text_input("Classe di concorso", value=record['Classe di concorso'] if pd.notna(record['Classe di concorso']) else "")
+        new_classe_concorso = st.text_input("Classe di concorso", value=record['Classe di concorso'] if pd.notna(record['Classe di concorso']) else "", key=f"classe_concorso_{index}")
         
-        new_insegnamento_comune = st.text_input("Insegnamento comune", value=record['Insegnamento comune'] if pd.notna(record['Insegnamento comune']) else "")
+        new_insegnamento_comune = st.text_input("Insegnamento comune", value=record['Insegnamento comune'] if pd.notna(record['Insegnamento comune']) else "", key=f"insegnamento_comune_{index}")
         
-        new_codice = st.text_input("Codice insegnamento", value=record['Codice insegnamento'] if pd.notna(record['Codice insegnamento']) else "")
+        new_codice = st.text_input("Codice insegnamento", value=record['Codice insegnamento'] if pd.notna(record['Codice insegnamento']) else "", key=f"codice_{index}")
         
-        new_denominazione = st.text_input("Denominazione Insegnamento", value=record['Denominazione Insegnamento'] if pd.notna(record['Denominazione Insegnamento']) else "")
+        new_denominazione = st.text_input("Denominazione Insegnamento", value=record['Denominazione Insegnamento'] if pd.notna(record['Denominazione Insegnamento']) else "", key=f"denominazione_{index}")
         
-        new_docente = st.text_input("Docente", value=record['Docente'] if pd.notna(record['Docente']) else "")
+        new_docente = st.text_input("Docente", value=record['Docente'] if pd.notna(record['Docente']) else "", key=f"docente_{index}")
     
     with col2:
-        new_pef60 = st.selectbox("PeF60 all.1", options=['P', 'D', '---'], index=['P', 'D', '---'].index(record['PeF60 all.1']) if pd.notna(record['PeF60 all.1']) and record['PeF60 all.1'] in ['P', 'D', '---'] else 2)
+        new_pef60 = st.selectbox("PeF60 all.1", options=['P', 'D', '---'], index=['P', 'D', '---'].index(record['PeF60 all.1']) if pd.notna(record['PeF60 all.1']) and record['PeF60 all.1'] in ['P', 'D', '---'] else 2, key=f"pef60_{index}")
         
-        new_pef30_all2 = st.selectbox("PeF30 all.2", options=['P', 'D', '---'], index=['P', 'D', '---'].index(record['PeF30 all.2']) if pd.notna(record['PeF30 all.2']) and record['PeF30 all.2'] in ['P', 'D', '---'] else 2)
+        new_pef30_all2 = st.selectbox("PeF30 all.2", options=['P', 'D', '---'], index=['P', 'D', '---'].index(record['PeF30 all.2']) if pd.notna(record['PeF30 all.2']) and record['PeF30 all.2'] in ['P', 'D', '---'] else 2, key=f"pef30_all2_{index}")
         
         new_pef36 = st.selectbox("PeF36 all.5", options=['P', 'D', '---'], index=['P', 'D', '---'].index(record['PeF36 all.5']) if pd.notna(record['PeF36 all.5']) and record['PeF36 all.5'] in ['P', 'D', '---'] else 2)
         
@@ -528,99 +528,262 @@ def create_new_record(df: pd.DataFrame) -> pd.DataFrame:
     """
     st.subheader("Aggiungi nuovo record")
     
-    # Layout a colonne per i campi del form
-    col1, col2 = st.columns(2)
+    # Inizializza le variabili per il riutilizzo dei dati
+    continue_iteration = st.session_state.get('continue_iteration', False)
+    last_record = st.session_state.get('last_record', {})
     
-    with col1:
-        new_data = st.text_input("Data (formato: lunedì 14 aprile 2025)")
-        
-        new_orario = st.text_input("Orario (formato: 00:00-00:00)")
-        
-        new_dipartimento = st.text_input("Dipartimento")
-        
-        new_classe_concorso = st.text_input("Classe di concorso")
-        
-        new_insegnamento_comune = st.text_input("Insegnamento comune")
-        
-        new_codice = st.text_input("Codice insegnamento")
-        
-        new_denominazione = st.text_input("Denominazione Insegnamento")
-        
-        new_docente = st.text_input("Docente")
+    # Aggiunta della funzionalità per selezionare un record esistente come base
+    use_existing_record = False
+    selected_record_idx = None
     
-    with col2:
-        new_pef60 = st.selectbox("PeF60 all.1", options=['P', 'D', '---'], index=2)
+    # Mostriamo l'opzione solo se ci sono record nel DataFrame
+    if len(df) > 0:
+        col1, col2 = st.columns([1, 3])
+        with col1:
+            use_existing_record = st.checkbox("Usa record esistente", key="use_existing_record")
         
-        new_pef30_all2 = st.selectbox("PeF30 all.2", options=['P', 'D', '---'], index=2)
-        
-        new_pef36 = st.selectbox("PeF36 all.5", options=['P', 'D', '---'], index=2)
-        
-        new_pef30_art13 = st.selectbox("PeF30 art.13", options=['P', 'D', '---'], index=2)
-        
-        new_aula = st.text_input("Aula")
-        
-        new_link = st.text_input("Link Teams")
-        
-        new_cfu = st.text_input("CFU")
-        
-        new_note = st.text_area("Note")
+        # Se l'utente ha selezionato di usare un record esistente
+        if use_existing_record:
+            # Filtra i record esistenti
+            with col2:
+                search_term = st.text_input("Cerca record (docente, insegnamento, data, etc.)", key="search_existing")
+            
+            if search_term:
+                # Cerca in tutte le colonne di stringhe
+                mask = pd.Series(False, index=df.index)
+                for col in df.columns:
+                    if df[col].dtype == 'object':  # Solo colonne di tipo object (stringhe)
+                        mask = mask | df[col].fillna('').astype(str).str.lower().str.contains(search_term.lower())
+                filtered_df = df[mask]
+            else:
+                filtered_df = df
+            
+            # Mostra i record filtrati per consentirne la selezione
+            if len(filtered_df) > 0:
+                # Prepara i record per la visualizzazione
+                filtered_df['Data_str'] = filtered_df['Data'].apply(format_date)
+                
+                # Mostra le colonne rilevanti per la selezione
+                view_cols = ['Data_str', 'Orario', 'Denominazione Insegnamento', 'Docente']
+                st.dataframe(filtered_df[view_cols], use_container_width=True, height=200)
+                
+                # Crea le opzioni per il selectbox
+                record_options = [f"{i+1}. {format_date(filtered_df.iloc[i]['Data'])} - {filtered_df.iloc[i]['Orario']} - {filtered_df.iloc[i]['Denominazione Insegnamento']} ({filtered_df.iloc[i]['Docente']})" 
+                                for i in range(len(filtered_df))]
+                
+                # Selectbox per selezionare il record
+                selected_record = st.selectbox("Seleziona il record da cui importare i dati:", 
+                                             record_options, 
+                                             key="select_record_base")
+                
+                if selected_record:
+                    # Ottieni l'indice del record selezionato
+                    selected_record_idx = filtered_df.index[record_options.index(selected_record)]
+                    
+                    # Usa i dati dal record selezionato
+                    record_to_use = df.iloc[selected_record_idx].copy()
+                    
+                    # Aggiorna il last_record con i dati del record selezionato
+                    last_record = record_to_use.to_dict()
+                    st.success(f"Importati i dati dal record: {selected_record}")
+                    # Imposta il flag per indicare che stiamo usando un record selezionato
+                    continue_iteration = True
+            else:
+                if search_term:
+                    st.warning("Nessun record trovato con questi criteri di ricerca.")
+                else:
+                    st.info("Inserisci un termine di ricerca per trovare un record da utilizzare.")
     
-    # Pulsanti per salvare o annullare
-    col1, col2 = st.columns(2)
-    with col1:
-        save = st.button("Salva nuovo record")
-    with col2:
-        cancel = st.button("Annulla")
+    # Se si sta continuando l'iterazione, prepara i dati dal record precedente
+    if continue_iteration:
+        # Reimposta il flag
+        st.session_state.continue_iteration = False
+        
+        # Recupera i valori dal record precedente
+        default_date = last_record.get('Data', None)
+        default_orario = last_record.get('Orario', '')
+        default_dipartimento = last_record.get('Dipartimento', '')
+        default_classe_concorso = last_record.get('Classe di concorso', '')
+        default_insegnamento_comune = last_record.get('Insegnamento comune', '')
+        default_codice = last_record.get('Codice insegnamento', '')
+        default_denominazione = last_record.get('Denominazione Insegnamento', '')
+        default_docente = last_record.get('Docente', '')
+        default_pef60 = last_record.get('PeF60 all.1', '---')
+        default_pef30_all2 = last_record.get('PeF30 all.2', '---')
+        default_pef36 = last_record.get('PeF36 all.5', '---')
+        default_pef30_art13 = last_record.get('PeF30 art.13', '---')
+        default_aula = last_record.get('Aula', '')
+        default_link = last_record.get('Link Teams', '')
+        default_cfu = last_record.get('CFU', '')
+        default_note = last_record.get('Note', '')
+        
+        st.info("I campi sono stati precompilati con i dati del record selezionato")
+    else:
+        # Valori predefiniti vuoti se non si sta continuando l'iterazione
+        default_date = None
+        default_orario = ''
+        default_dipartimento = ''
+        default_classe_concorso = ''
+        default_insegnamento_comune = ''
+        default_codice = ''
+        default_denominazione = ''
+        default_docente = ''
+        default_pef60 = '---'
+        default_pef30_all2 = '---'
+        default_pef36 = '---'
+        default_pef30_art13 = '---'
+        default_aula = ''
+        default_link = ''
+        default_cfu = ''
+        default_note = ''
     
-    if save:
-        # Crea un nuovo record
-        try:
-            # Usa la funzione centralizzata per il parsing delle date
-            parsed_date = parse_date(new_data)
-            if parsed_date is None:
-                st.error("Formato data non valido!")
-                return df
-            
-            # Estrai i componenti della data
-            giorno, mese, anno = extract_date_components(format_date(parsed_date))
-            
-            # Crea il nuovo record con tutti i campi necessari
-            new_record = {
-                'Data': parsed_date,
-                'Orario': new_orario,
-                'Dipartimento': new_dipartimento,
-                'Classe di concorso': new_classe_concorso,
-                'Insegnamento comune': new_insegnamento_comune,
-                'PeF60 all.1': new_pef60,
-                'PeF30 all.2': new_pef30_all2,
-                'PeF36 all.5': new_pef36,
-                'PeF30 art.13': new_pef30_art13,
-                'Codice insegnamento': new_codice,
-                'Denominazione Insegnamento': new_denominazione,
-                'Docente': new_docente,
-                'Aula': new_aula,
-                'Link Teams': new_link,
-                'CFU': new_cfu,
-                'Note': new_note,
-                'Giorno': giorno,
-                'Mese': mese,
-                'Anno': anno
-            }
-            
-            # Aggiungi il record al dataframe
-            df = pd.concat([df, pd.DataFrame([new_record])], ignore_index=True)
-            
-            # Salva automaticamente il dataframe aggiornato
-            save_data(df)
-            
-            st.success("Nuovo record aggiunto e salvato con successo!")
-        except Exception as e:
-            st.error(f"Errore durante l'aggiunta del record: {e}")
-            import traceback
-            st.error(f"Dettaglio: {traceback.format_exc()}")
+    # Usa una chiave unica per il form
+    form_key = "new_record_form"
     
-    if cancel:
+    # Crea un form per raggruppare tutti i campi di input
+    with st.form(key=form_key):
+        # Layout a colonne per i campi del form
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # Utilizza date_input per selezionare la data con un calendario
+            selected_date = st.date_input(
+                "Data", 
+                value=default_date,
+                format="DD/MM/YYYY",
+                help="Seleziona la data della lezione"
+            )
+            
+            new_orario = st.text_input("Orario (formato: 00:00-00:00)", value=default_orario)
+            
+            new_dipartimento = st.text_input("Dipartimento", value=default_dipartimento)
+            
+            new_classe_concorso = st.text_input("Classe di concorso", value=default_classe_concorso)
+            
+            new_insegnamento_comune = st.text_input("Insegnamento comune", value=default_insegnamento_comune)
+            
+            new_codice = st.text_input("Codice insegnamento", value=default_codice)
+            
+            new_denominazione = st.text_input("Denominazione Insegnamento", value=default_denominazione)
+            
+            new_docente = st.text_input("Docente", value=default_docente)
+        
+        with col2:
+            new_pef60 = st.selectbox("PeF60 all.1", options=['P', 'D', '---'], index=['P', 'D', '---'].index(default_pef60) if default_pef60 in ['P', 'D', '---'] else 2)
+            
+            new_pef30_all2 = st.selectbox("PeF30 all.2", options=['P', 'D', '---'], index=['P', 'D', '---'].index(default_pef30_all2) if default_pef30_all2 in ['P', 'D', '---'] else 2)
+            
+            new_pef36 = st.selectbox("PeF36 all.5", options=['P', 'D', '---'], index=['P', 'D', '---'].index(default_pef36) if default_pef36 in ['P', 'D', '---'] else 2)
+            
+            new_pef30_art13 = st.selectbox("PeF30 art.13", options=['P', 'D', '---'], index=['P', 'D', '---'].index(default_pef30_art13) if default_pef30_art13 in ['P', 'D', '---'] else 2)
+            
+            new_aula = st.text_input("Aula", value=default_aula)
+            
+            new_link = st.text_input("Link Teams", value=default_link)
+            
+            new_cfu = st.text_input("CFU", value=default_cfu)
+            
+            new_note = st.text_area("Note", value=default_note)
+        
+        # Pulsante di submit del form
+        submit_button = st.form_submit_button(label="Salva nuovo record")
+    
+    # Pulsante per annullare (fuori dal form)
+    if st.button("Annulla"):
         st.experimental_rerun()
+        return df
+    
+    if submit_button:
+        # Mostra un messaggio di caricamento
+        with st.spinner("Salvataggio del nuovo record in corso..."):
+            try:
+                # Verifica se la data è stata selezionata
+                if selected_date is None:
+                    st.error("Seleziona una data valida!")
+                    return df
+                
+                # Verifica se almeno il campo orario è stato compilato
+                if not new_orario or new_orario.strip() == "":
+                    st.error("Il campo Orario è obbligatorio!")
+                    return df
+                    
+                # Imposta la locale per i nomi in italiano
+                setup_locale()
+                    
+                # Converti la data selezionata in un oggetto datetime pandas
+                parsed_date = pd.Timestamp(selected_date)
+                
+                # Estrai i componenti della data
+                giorno = parsed_date.strftime("%A").capitalize()
+                mese = parsed_date.strftime("%B").capitalize()
+                anno = str(parsed_date.year)
+                
+                # Crea il nuovo record con tutti i campi necessari
+                new_record = {
+                    'Data': parsed_date,
+                    'Orario': new_orario,
+                    'Dipartimento': new_dipartimento,
+                    'Classe di concorso': new_classe_concorso,
+                    'Insegnamento comune': new_insegnamento_comune,
+                    'PeF60 all.1': new_pef60,
+                    'PeF30 all.2': new_pef30_all2,
+                    'PeF36 all.5': new_pef36,
+                    'PeF30 art.13': new_pef30_art13,
+                    'Codice insegnamento': new_codice,
+                    'Denominazione Insegnamento': new_denominazione,
+                    'Docente': new_docente,
+                    'Aula': new_aula,
+                    'Link Teams': new_link,
+                    'CFU': new_cfu,
+                    'Note': new_note,
+                    'Giorno': giorno,
+                    'Mese': mese,
+                    'Anno': anno
+                }
+                
+                # Debug: mostra i valori del nuovo record
+                st.info(f"Data: {parsed_date}, Giorno: {giorno}, Mese: {mese}, Anno: {anno}")
+                
+                # Aggiungi il record al dataframe
+                new_df = pd.concat([df, pd.DataFrame([new_record])], ignore_index=True)
+                
+                # Salva automaticamente il dataframe aggiornato
+                save_data(new_df, replace_file=True)
+                
+                st.success("Nuovo record aggiunto e salvato con successo!")
+                
+                # Chiedi all'utente se desidera continuare ad aggiungere record
+                if "continue_adding" not in st.session_state:
+                    st.session_state.continue_adding = True
+                
+                # Salva il record corrente in session_state per un eventuale riutilizzo
+                st.session_state.last_record = new_record.copy()
+                
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    if st.button("Aggiungi un altro record", key="add_another"):
+                        st.session_state.continue_adding = True
+                        # Ricarica la pagina per ripulire il form
+                        st.experimental_rerun()
+                with col2:
+                    if st.button("Continuare l'iterazione?", key="btn_continue_iteration"):
+                        st.session_state.continue_adding = True
+                        st.session_state.continue_iteration = True
+                        # Salva i dati dell'ultimo record per poterli riutilizzare
+                        st.session_state.last_record = new_record.copy()
+                        # Ricarica la pagina mantenendo i dati dell'ultimo record
+                        st.experimental_rerun()
+                with col3:
+                    if st.button("Termina inserimento", key="finish_adding"):
+                        st.session_state.continue_adding = False
+                        
+                # Ritorniamo il dataframe aggiornato
+                return new_df
+                
+            except Exception as e:
+                st.error(f"Errore durante l'aggiunta del record: {e}")
+                import traceback
+                st.error(f"Dettaglio: {traceback.format_exc()}")
     
     return df
 
@@ -686,6 +849,277 @@ def create_sample_excel():
     writer.close()
     
     return file_path
+
+def duplicate_record(df: pd.DataFrame, index: int) -> pd.DataFrame:
+    """
+    Duplica un record esistente e permette di modificarlo prima di salvarlo.
+    
+    Args:
+        df: DataFrame contenente i dati
+        index: Indice del record da duplicare
+        
+    Returns:
+        pd.DataFrame: DataFrame aggiornato con il record duplicato
+    """
+    # Chiavi di sessione per questo form
+    session_prefix = f"dup_{index}_"
+    form_id = f"duplicate_form_{index}"
+    
+    # Controlla se è attivo un processo di duplicazione per questo record
+    if f"duplicating_{index}" not in st.session_state:
+        # Prima volta che apriamo il form, inizializza i dati
+        st.session_state[f"duplicating_{index}"] = True
+        
+        # Ottieni il record da duplicare
+        record = df.iloc[index].copy()
+        
+        # Stampiamo i valori del record originale per debug
+        st.write("Valori del record originale:")
+        st.write(f"Denominazione: {record['Denominazione Insegnamento']}")
+        st.write(f"Docente: {record['Docente']}")
+        st.write(f"Dipartimento: {record['Dipartimento']}")
+        st.write(f"Classe di concorso: {record['Classe di concorso']}")
+        st.write(f"CFU: {record['CFU']}")
+        
+        # Imposta i valori predefiniti
+        try:
+            # Per la data, impostiamo la data corrente come default (può essere cambiata dall'utente)
+            st.session_state[f"{session_prefix}date"] = datetime.datetime.now().date()
+            
+            # Per l'orario, lasciamolo vuoto per inserimento manuale
+            st.session_state[f"{session_prefix}orario"] = ""
+            
+            # Copia TUTTI i campi dal record originale senza tentativi di conversione che potrebbero fallire
+            # Campi principali
+            st.session_state[f"{session_prefix}dipartimento"] = record['Dipartimento'] if pd.notna(record['Dipartimento']) else ""
+            st.session_state[f"{session_prefix}classe_concorso"] = record['Classe di concorso'] if pd.notna(record['Classe di concorso']) else ""
+            st.session_state[f"{session_prefix}insegnamento_comune"] = record['Insegnamento comune'] if pd.notna(record['Insegnamento comune']) else ""
+            st.session_state[f"{session_prefix}codice"] = record['Codice insegnamento'] if pd.notna(record['Codice insegnamento']) else ""
+            st.session_state[f"{session_prefix}denominazione"] = record['Denominazione Insegnamento'] if pd.notna(record['Denominazione Insegnamento']) else ""
+            st.session_state[f"{session_prefix}docente"] = record['Docente'] if pd.notna(record['Docente']) else ""
+            
+            # Campi PeF - Manteniamo i valori originali senza forzare il formato
+            st.session_state[f"{session_prefix}pef60"] = record['PeF60 all.1'] if pd.notna(record['PeF60 all.1']) else "---"
+            st.session_state[f"{session_prefix}pef30_all2"] = record['PeF30 all.2'] if pd.notna(record['PeF30 all.2']) else "---"
+            st.session_state[f"{session_prefix}pef36"] = record['PeF36 all.5'] if pd.notna(record['PeF36 all.5']) else "---"
+            st.session_state[f"{session_prefix}pef30_art13"] = record['PeF30 art.13'] if pd.notna(record['PeF30 art.13']) else "---"
+            
+            # Altri campi
+            st.session_state[f"{session_prefix}aula"] = record['Aula'] if pd.notna(record['Aula']) else ""
+            st.session_state[f"{session_prefix}link"] = record['Link Teams'] if pd.notna(record['Link Teams']) else ""
+            st.session_state[f"{session_prefix}cfu"] = record['CFU'] if pd.notna(record['CFU']) else ""
+            st.session_state[f"{session_prefix}note"] = record['Note'] if pd.notna(record['Note']) else ""
+        except Exception as e:
+            st.warning(f"Errore nell'inizializzazione dei campi: {e}")
+    
+    st.subheader(f"Duplica record #{index + 1}")
+    
+    if index < 0 or index >= len(df):
+        st.error(f"Indice non valido: {index}")
+        if f"duplicating_{index}" in st.session_state:
+            del st.session_state[f"duplicating_{index}"]
+        return df
+    
+    # Prepara le opzioni per i menu a tendina
+    pef_options = ['P', 'D', '---']
+    
+    # Aggiungiamo una form per dare struttura e logica all'interfaccia
+    with st.form(key=f"duplicate_form_{form_id}"):
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # Data con date_input (NON MODIFICARE il valore dopo)
+            selected_date = st.date_input(
+                "Data", 
+                value=st.session_state.get(f"{session_prefix}date", datetime.datetime.now().date()),
+                format="DD/MM/YYYY",
+                help="Seleziona la data della lezione",
+                key=f"{session_prefix}date_input"
+            )
+            
+            # Altri campi del form
+            orario = st.text_input(
+                "Orario (formato: 00:00-00:00)", 
+                value=st.session_state.get(f"{session_prefix}orario", ""),
+                key=f"{session_prefix}orario_input"
+            )
+            
+            dipartimento = st.text_input(
+                "Dipartimento", 
+                value=st.session_state.get(f"{session_prefix}dipartimento", ""),
+                key=f"{session_prefix}dipartimento_input"
+            )
+            
+            classe_concorso = st.text_input(
+                "Classe di concorso", 
+                value=st.session_state.get(f"{session_prefix}classe_concorso", ""),
+                key=f"{session_prefix}classe_concorso_input"
+            )
+            
+            insegnamento_comune = st.text_input(
+                "Insegnamento comune", 
+                value=st.session_state.get(f"{session_prefix}insegnamento_comune", ""),
+                key=f"{session_prefix}insegnamento_comune_input"
+            )
+            
+            codice = st.text_input(
+                "Codice insegnamento", 
+                value=st.session_state.get(f"{session_prefix}codice", ""),
+                key=f"{session_prefix}codice_input"
+            )
+            
+            denominazione = st.text_input(
+                "Denominazione Insegnamento", 
+                value=st.session_state.get(f"{session_prefix}denominazione", ""),
+                key=f"{session_prefix}denominazione_input"
+            )
+            
+            docente = st.text_input(
+                "Docente", 
+                value=st.session_state.get(f"{session_prefix}docente", ""),
+                key=f"{session_prefix}docente_input"
+            )
+        
+        with col2:
+            # Menu a tendina con indici corretti
+            pef60 = st.selectbox(
+                "PeF60 all.1", 
+                options=pef_options, 
+                index=pef_options.index(st.session_state.get(f"{session_prefix}pef60", "---")),
+                key=f"{session_prefix}pef60_select"
+            )
+            
+            pef30_all2 = st.selectbox(
+                "PeF30 all.2", 
+                options=pef_options, 
+                index=pef_options.index(st.session_state.get(f"{session_prefix}pef30_all2", "---")),
+                key=f"{session_prefix}pef30_all2_select"
+            )
+            
+            pef36 = st.selectbox(
+                "PeF36 all.5", 
+                options=pef_options, 
+                index=pef_options.index(st.session_state.get(f"{session_prefix}pef36", "---")),
+                key=f"{session_prefix}pef36_select"
+            )
+            
+            pef30_art13 = st.selectbox(
+                "PeF30 art.13", 
+                options=pef_options, 
+                index=pef_options.index(st.session_state.get(f"{session_prefix}pef30_art13", "---")),
+                key=f"{session_prefix}pef30_art13_select"
+            )
+            
+            aula = st.text_input(
+                "Aula", 
+                value=st.session_state.get(f"{session_prefix}aula", ""),
+                key=f"{session_prefix}aula_input"
+            )
+            
+            link = st.text_input(
+                "Link Teams", 
+                value=st.session_state.get(f"{session_prefix}link", ""),
+                key=f"{session_prefix}link_input"
+            )
+            
+            cfu = st.text_input(
+                "CFU", 
+                value=st.session_state.get(f"{session_prefix}cfu", ""),
+                key=f"{session_prefix}cfu_input"
+            )
+            
+            note = st.text_area(
+                "Note", 
+                value=st.session_state.get(f"{session_prefix}note", ""),
+                key=f"{session_prefix}note_input"
+            )
+        
+        # Pulsante di invio del form
+        submitted = st.form_submit_button("Salva come nuovo record")
+    
+    # Pulsante per annullare (fuori dal form)
+    if st.button("Annulla", key=f"cancel_btn_{form_id}"):
+        # Pulisci lo stato della sessione
+        if f"duplicating_{index}" in st.session_state:
+            del st.session_state[f"duplicating_{index}"]
+            
+        # Pulisci tutti i valori dalla sessione
+        for key in list(st.session_state.keys()):
+            if key.startswith(session_prefix):
+                del st.session_state[key]
+                
+        st.rerun()
+    
+    if submitted:
+        # Crea un nuovo record
+        try:
+            # Converti la data selezionata in datetime
+            if selected_date is None:
+                st.error("Seleziona una data valida!")
+                return df
+                
+            # Imposta la locale per ottenere i nomi italiani
+            setup_locale()
+            
+            # Converti la data selezionata in un oggetto datetime pandas
+            parsed_date = pd.Timestamp(selected_date)
+            
+            # Estrai i componenti della data
+            giorno = parsed_date.strftime("%A").capitalize()
+            mese = parsed_date.strftime("%B").capitalize()
+            anno = str(parsed_date.year)
+            
+            # Crea il nuovo record con tutti i campi necessari
+            new_record = {
+                'Data': parsed_date,
+                'Orario': orario,
+                'Dipartimento': dipartimento,
+                'Classe di concorso': classe_concorso,
+                'Insegnamento comune': insegnamento_comune,
+                'PeF60 all.1': pef60,
+                'PeF30 all.2': pef30_all2,
+                'PeF36 all.5': pef36,
+                'PeF30 art.13': pef30_art13,
+                'Codice insegnamento': codice,
+                'Denominazione Insegnamento': denominazione,
+                'Docente': docente,
+                'Aula': aula,
+                'Link Teams': link,
+                'CFU': cfu,
+                'Note': note,
+                'Giorno': giorno,
+                'Mese': mese,
+                'Anno': anno
+            }
+            
+            # Aggiungi il record al dataframe
+            new_df = pd.concat([df, pd.DataFrame([new_record])], ignore_index=True)
+            
+            # Salva il dataframe aggiornato
+            save_data(new_df, replace_file=True)
+            
+            # Messaggio di successo
+            st.success("Record duplicato e salvato con successo!")
+            
+            # Pulisci lo stato della sessione
+            if f"duplicating_{index}" in st.session_state:
+                del st.session_state[f"duplicating_{index}"]
+                
+            # Pulisci tutti i valori dalla sessione
+            for key in list(st.session_state.keys()):
+                if key.startswith(session_prefix):
+                    del st.session_state[key]
+            
+            # Restituisci subito il nuovo dataframe invece di fare rerun
+            return new_df
+            
+        except Exception as e:
+            st.error(f"Errore durante la duplicazione del record: {e}")
+            import traceback
+            st.error(f"Dettaglio: {traceback.format_exc()}")
+    
+    # Se non è stato premuto il pulsante di salvataggio, restituisci il DataFrame originale
+    return df
 
 def admin_interface(df: pd.DataFrame) -> pd.DataFrame:
     """
