@@ -39,10 +39,6 @@ def main():
     st.title("📅 Calendario Lezioni")
     st.write("Percorsi di formazione iniziale dei docenti (DPCM 4 agosto 2023)")
     
-    # Mostra il conteggio dei record
-    if df is not None and 'total_records' in st.session_state:
-        st.info(f"📊 Totale record: {st.session_state.total_records}")
-    
     # Interfaccia principale
     if df is not None:
         # Sposta i filtri nella sidebar
@@ -194,7 +190,16 @@ def main():
         
         # Visualizzazione dei risultati
         st.markdown("### 📋 Risultati della Ricerca")
-        st.write(f"Trovati {len(filtered_df)} record.")
+        
+        # Calcola il totale CFU dei record filtrati
+        filtered_cfu = 0
+        if 'CFU' in filtered_df.columns:
+            # Assicurati che tutti i valori CFU siano numerici
+            filtered_df['CFU'] = pd.to_numeric(filtered_df['CFU'], errors='coerce')
+            filtered_cfu = filtered_df['CFU'].fillna(0).sum()
+        
+        # Mostra il conteggio delle lezioni filtrate e il loro totale CFU
+        st.info(f"📊 Lezioni selezionate: {len(filtered_df)} | 🎓 CFU selezionati: {filtered_cfu:.1f}")
         
         if not filtered_df.empty:
             # Converti le date per la visualizzazione
@@ -233,6 +238,14 @@ def main():
             # Se ci sono link Teams, fornisci istruzioni su come aprirli
             if 'Link Teams' in view_cols:
                 st.info("ℹ️ I link Teams sono disponibili nella colonna 'Link Teams'. Copia e incolla il link nel tuo browser per aprire la riunione Teams.")
+                
+            # Aggiungi una separazione visiva
+            st.markdown("---")
+            
+            # Mostra il conteggio totale dei record e CFU in fondo alla pagina
+            if 'total_records' in st.session_state:
+                total_cfu = st.session_state.get('total_cfu', 0)
+                st.caption(f"📊 Totale record nel calendario: {st.session_state.total_records} | 🎓 Totale CFU nel calendario: {total_cfu:.1f}")
         else:
             st.warning("Nessun risultato trovato con i filtri selezionati.")
     else:

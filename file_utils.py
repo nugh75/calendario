@@ -333,8 +333,19 @@ def load_data() -> pd.DataFrame:
             if print_debug:
                 print(f"Dati JSON caricati con successo. Totale record: {len(df)}")
             
-            # Aggiorna il conteggio dei record nella sessione
+            # Calcola il totale dei CFU
+            total_cfu = 0
+            if 'CFU' in df.columns:
+                # Assicurati che tutti i valori CFU siano numerici
+                df['CFU'] = pd.to_numeric(df['CFU'], errors='coerce')
+                total_cfu = df['CFU'].fillna(0).sum()
+                
+                if print_debug:
+                    print(f"Totale CFU calcolati: {total_cfu}")
+            
+            # Aggiorna il conteggio dei record e dei CFU nella sessione
             st.session_state['total_records'] = len(df)
+            st.session_state['total_cfu'] = total_cfu
             
             return df
             
@@ -1084,6 +1095,10 @@ def admin_interface(df: pd.DataFrame) -> pd.DataFrame:
         # Filtro per Insegnamento
         insegnamenti = sorted(df['Denominazione Insegnamento'].dropna().unique())
         insegnamento_selected = st.multiselect("Insegnamento:", insegnamenti, key="admin_filter_insegnamento")
+        
+        # Filtro per Dipartimento
+        dipartimenti = sorted(df['Dipartimento'].dropna().unique())
+        dipartimento_selected = st.multiselect("Dipartimento:", dipartimenti, key="admin_filter_dipartimento")
             
         # Filtro per Classe di concorso
         classi_concorso = sorted(df['Classe di concorso'].dropna().unique())
@@ -1137,6 +1152,54 @@ def admin_interface(df: pd.DataFrame) -> pd.DataFrame:
         with pef_col2:
             pef30_all2_selected = st.checkbox("PeF30 all.2 (30 CFU)", key="admin_filter_pef30_all2")
             pef30_art13_selected = st.checkbox("PeF30 art.13 (30 CFU)", key="admin_filter_pef30_art13")
+            
+        st.markdown("---")
+        
+        # Selettore delle colonne da visualizzare
+        st.markdown("#### 👁️ Visualizzazione Colonne")
+        
+        # Definisci tutte le colonne disponibili con etichette user-friendly
+        available_columns = {
+            'Data': 'Data',
+            'Orario': 'Orario',
+            'Dipartimento': 'Dipartimento',
+            'Classe di concorso': 'Classe di concorso', 
+            'Insegnamento comune': 'Insegnamento comune',
+            'PeF60 all.1': 'PeF60 all.1',
+            'PeF30 all.2': 'PeF30 all.2',
+            'PeF36 all.5': 'PeF36 all.5',
+            'PeF30 art.13': 'PeF30 art.13',
+            'Codice insegnamento': 'Codice insegnamento',
+            'Denominazione Insegnamento': 'Denominazione Insegnamento',
+            'Docente': 'Docente',
+            'Aula': 'Aula',
+            'Link Teams': 'Link Teams', 
+            'CFU': 'CFU',
+            'Note': 'Note'
+        }
+        
+        # Colonne predefinite (obbligatorie)
+        default_columns = ['Data', 'Orario', 'Denominazione Insegnamento', 'Docente', 'Aula']
+        
+        # Selezione delle colonne da visualizzare
+        if 'admin_selected_columns' not in st.session_state:
+            st.session_state.admin_selected_columns = default_columns
+                
+        columns_to_display = st.multiselect(
+            "Seleziona le colonne da visualizzare:",
+            options=list(available_columns.keys()),
+            default=st.session_state.admin_selected_columns,
+            format_func=lambda x: available_columns[x],
+            key="admin_columns_multiselect"
+        )
+        
+        # Assicurati che ci siano sempre alcune colonne minime selezionate
+        if not columns_to_display:
+            columns_to_display = default_columns
+            st.warning("Seleziona almeno una colonna. Sono state ripristinate le colonne predefinite.")
+        
+        # Aggiorna lo stato della sessione
+        st.session_state.admin_selected_columns = columns_to_display
     
     # Tab per visualizzare i record
     with admin_tabs[0]:
@@ -1202,11 +1265,23 @@ def admin_interface(df: pd.DataFrame) -> pd.DataFrame:
         
         # Mostra i record
         if len(display_df) > 0:
-            # Mostra tutte le colonne rilevanti
-            view_cols = ['Data', 'Orario', 'Dipartimento', 'Classe di concorso', 'Insegnamento comune', 
-                      'PeF60 all.1', 'PeF30 all.2', 'PeF36 all.5', 'PeF30 art.13',
-                      'Codice insegnamento', 'Denominazione Insegnamento', 'Docente', 'Aula', 
-                      'Link Teams', 'CFU', 'Note']
+            # Usa le colonne selezionate dall'utente nella sidebar
+            view_cols = st.session_state.admin_selected_columns
+            
+            # Se sono selezionati percorsi formativi specifici, assicurati che le loro colonne siano incluse
+            pef_cols_to_include = []
+            if pef60_selected and 'PeF60 all.1' not in view_cols:
+                pef_cols_to_include.append('PeF60 all.1')
+            if pef30_all2_selected and 'PeF30 all.2' not in view_cols:
+                pef_cols_to_include.append('PeF30 all.2')
+            if pef36_selected and 'PeF36 all.5' not in view_cols:
+                pef_cols_to_include.append('PeF36 all.5')
+            if pef30_art13_selected and 'PeF30 art.13' not in view_cols:
+                pef_cols_to_include.append('PeF30 art.13')
+                
+            # Aggiungi le colonne dei percorsi selezionati se non sono già incluse
+            if pef_cols_to_include:
+                view_cols = view_cols + pef_cols_to_include
             
             # Converti 'Data' al formato stringa per visualizzazione
             view_df = display_df.copy()
