@@ -5,7 +5,7 @@ Permette di aggiungere, modificare ed eliminare i record.
 
 import streamlit as st
 import pandas as pd
-from file_utils import load_data, admin_interface
+from file_utils import load_data, admin_interface, create_sample_excel
 from admin_utils import is_admin_logged_in, upload_excel_file
 
 def show_admin_management():
@@ -34,7 +34,7 @@ def show_admin_management():
             if submit_button:
                 if login_admin(password):
                     st.success("✅ Accesso effettuato con successo!")
-                    st.experimental_rerun()
+                    st.rerun()
                 else:
                     st.error("❌ Password errata")
         
@@ -45,7 +45,7 @@ def show_admin_management():
         # Logout button
         if st.sidebar.button("🚪 Logout"):
             logout_admin()
-            st.experimental_rerun()
+            st.rerun()
     
     # Carica i dati
     df = load_data()
@@ -74,7 +74,7 @@ def show_admin_management():
                 result = upload_excel_file(uploaded_file)
                 if result:
                     st.success("Dati importati con successo!")
-                    st.experimental_rerun()
+                    st.rerun()
                 else:
                     st.error("Si è verificato un errore durante l'importazione.")
         

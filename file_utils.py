@@ -99,8 +99,51 @@ def extract_date_components(date_str: str) -> Tuple[Optional[str], Optional[str]
         mese = date.strftime("%B").capitalize()
         anno = str(date.year)
         return giorno, mese, anno
-    except:
+    
+    except Exception as e:
+        st.warning(f"Errore nell'estrazione dei componenti della data: {e}")
         return None, None, None
+
+def create_sample_excel():
+    """
+    Crea un file Excel di esempio con la struttura corretta per l'importazione.
+    
+    Returns:
+        str: Percorso del file Excel creato
+    """
+    # Crea un DataFrame di esempio con le colonne necessarie
+    sample_data = {col: [] for col in FULL_COLUMNS}
+    df = pd.DataFrame(sample_data)
+    
+    # Aggiungi una riga di esempio
+    example_row = {
+        'Data': '2025-04-28', 
+        'Orario': '14:30-16:45',
+        'Dipartimento': 'Area Trasversale - Canale A',
+        'Classe di concorso': 'Area Trasversale - Canale A',
+        'Insegnamento comune': 'Trasversale A',
+        'PeF60 all.1': 'D',
+        'PeF30 all.2': 'D',
+        'PeF36 all.5': 'D',
+        'PeF30 art.13': 'D',
+        'Codice insegnamento': '22911105',
+        'Denominazione Insegnamento': 'Pedagogia generale e interculturale',
+        'Docente': 'Scaramuzzo Gilberto',
+        'Aula': '',
+        'Link Teams': '',
+        'CFU': '0.5',
+        'Note': '',
+        'Giorno': 'Lunedì',
+        'Mese': 'Aprile',
+        'Anno': '2025'
+    }
+    df = pd.concat([df, pd.DataFrame([example_row])], ignore_index=True)
+    
+    # Salva il DataFrame in un file Excel
+    template_path = os.path.join(DATA_FOLDER, 'template_calendario.xlsx')
+    df.to_excel(template_path, index=False)
+    
+    return template_path
 
 def normalize_code(code_str: str) -> str:
     """
@@ -789,66 +832,44 @@ def create_new_record(df: pd.DataFrame) -> pd.DataFrame:
 
 def create_sample_excel():
     """
-    Crea un file Excel di esempio per il caricamento.
+    Crea un file Excel di esempio con la struttura corretta per l'importazione.
     
     Returns:
         str: Percorso del file Excel creato
     """
-    # Crea un dataframe vuoto con le colonne richieste
+    # Crea un DataFrame di esempio con le colonne necessarie
+    sample_data = {col: [] for col in FULL_COLUMNS}
+    df = pd.DataFrame(sample_data)
     
-    # Crea dati di esempio con formato data corretto
-    from datetime import datetime
+    # Aggiungi una riga di esempio
+    example_row = {
+        'Data': '2025-04-28', 
+        'Orario': '14:30-16:45',
+        'Dipartimento': 'Area Trasversale - Canale A',
+        'Classe di concorso': 'Area Trasversale - Canale A',
+        'Insegnamento comune': 'Trasversale A',
+        'PeF60 all.1': 'D',
+        'PeF30 all.2': 'D',
+        'PeF36 all.5': 'D',
+        'PeF30 art.13': 'D',
+        'Codice insegnamento': '22911105',
+        'Denominazione Insegnamento': 'Pedagogia generale e interculturale',
+        'Docente': 'Scaramuzzo Gilberto',
+        'Aula': '',
+        'Link Teams': '',
+        'CFU': '0.5',
+        'Note': '',
+        'Giorno': 'Lunedì',
+        'Mese': 'Aprile',
+        'Anno': '2025'
+    }
+    df = pd.concat([df, pd.DataFrame([example_row])], ignore_index=True)
     
-    # Ottieni le date e formattale correttamente in italiano
-    date1 = datetime(2025, 5, 5)  # 5 maggio 2025
-    date2 = datetime(2025, 5, 5)
+    # Salva il DataFrame in un file Excel
+    template_path = os.path.join(DATA_FOLDER, 'template_calendario.xlsx')
+    df.to_excel(template_path, index=False)
     
-    # Imposta la localizzazione italiana
-    setup_locale()
-    
-    # Formatta le date in italiano
-    date_format = "%A %d %B %Y"
-    date1_str = date1.strftime(date_format).lower()  # Tutto minuscolo come nell'esempio
-    date2_str = date2.strftime(date_format).lower()
-    
-    data = [
-        [date1_str, '14:30-16:45', 'Area Trasversale - Canale A', 'A054', 'Trasversale A', 
-         'D', 'D', 'D', '---', '22911115', 'Educazione linguistica', 'Nuzzo Elena', '', '', '0,5', ''],
-        [date2_str, '16:45-19:00', 'Area Trasversale - Canale A', 'A054', 'Trasversale A', 
-         'D', 'D', 'D', '---', '22911115', 'Educazione linguistica', 'Cortés Velásquez Diego', '', '', '0,5', ''],
-    ]
-    
-    df = pd.DataFrame(data, columns=BASE_COLUMNS)
-    
-    # Salva il dataframe come file Excel
-    file_path = os.path.join(DATA_FOLDER, 'esempio_caricamento.xlsx')
-    os.makedirs(DATA_FOLDER, exist_ok=True)
-    
-    # Crea il writer Excel
-    writer = pd.ExcelWriter(file_path, engine='openpyxl')
-    
-    # Aggiungi le intestazioni necessarie prima del dataframe
-    workbook = writer.book
-    worksheet = workbook.create_sheet("Calendario", 0)
-    
-    # Aggiungi le intestazioni
-    worksheet.cell(row=1, column=1, value="Calendario lezioni")
-    worksheet.cell(row=2, column=1, value="Percorsi di formazione iniziale dei docenti")
-    worksheet.cell(row=3, column=1, value="(DPCM 4 agosto 2023)")
-    
-    # Aggiungi le intestazioni delle colonne
-    for col_num, column_title in enumerate(BASE_COLUMNS, 1):
-        worksheet.cell(row=4, column=col_num, value=column_title)
-    
-    # Aggiungi i dati
-    for row_num, row_data in enumerate(data, 5):
-        for col_num, cell_value in enumerate(row_data, 1):
-            worksheet.cell(row=row_num, column=col_num, value=cell_value)
-    
-    # Salva il file
-    writer.close()
-    
-    return file_path
+    return template_path
 
 def duplicate_record(df: pd.DataFrame, index: int) -> pd.DataFrame:
     """
