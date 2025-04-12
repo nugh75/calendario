@@ -44,7 +44,7 @@ def mostra_statistiche_docenti(df):
     st.subheader("Statistiche Lezioni per Docente")
     
     # Prepariamo un nuovo dataframe ottimizzato per le statistiche
-    stat_columns = ['Docente', 'Data', 'Orario', 'Denominazione Insegnamento', 'CFU', 'Ore']
+    stat_columns = ['Docente', 'Dipartimento', 'Data', 'Orario', 'Denominazione Insegnamento', 'CFU', 'Ore']
     lezioni_df = stats_df[stat_columns].copy()
     
     # Standardizziamo i valori CFU
@@ -57,14 +57,15 @@ def mostra_statistiche_docenti(df):
     # Calcolo statistiche per docente
     if not lezioni_df.empty:
         # Raggruppamento e calcolo
-        docenti_stats = lezioni_df.groupby('Docente').agg(
+        # Aggiungiamo dipartimento al raggruppamento per mantenerlo nelle statistiche
+        docenti_stats = lezioni_df.groupby(['Docente', 'Dipartimento']).agg(
             Numero_lezioni=pd.NamedAgg(column='Denominazione Insegnamento', aggfunc='count'),
             Totale_CFU=pd.NamedAgg(column='CFU', aggfunc='sum'),
             Totale_Ore=pd.NamedAgg(column='Ore', aggfunc='sum')
         ).reset_index()
         
         # Rinomina colonne per visualizzazione
-        docenti_stats.columns = ['Docente', 'Numero lezioni', 'Totale CFU', 'Totale Ore']
+        docenti_stats.columns = ['Docente', 'Dipartimento', 'Numero lezioni', 'Totale CFU', 'Totale Ore']
         
         # Arrotonda i valori CFU e ore
         docenti_stats['Totale CFU'] = docenti_stats['Totale CFU'].round(1)
@@ -81,9 +82,9 @@ def mostra_statistiche_docenti(df):
         # Ordina per docente
         docenti_stats = docenti_stats.sort_values('Docente')
         
-        # Visualizza statistiche con la nuova colonna delle ore
-        display_stats = docenti_stats[['Docente', 'Numero lezioni', 'Totale CFU', 'Totale Ore Formattate']]
-        display_stats.columns = ['Docente', 'Numero lezioni', 'Totale CFU', 'Totale Ore']
+        # Visualizza statistiche con la nuova colonna delle ore e il dipartimento
+        display_stats = docenti_stats[['Docente', 'Dipartimento', 'Numero lezioni', 'Totale CFU', 'Totale Ore Formattate']]
+        display_stats.columns = ['Docente', 'Dipartimento', 'Numero lezioni', 'Totale CFU', 'Totale Ore']
         st.dataframe(display_stats, use_container_width=True, hide_index=True)
         
         # Calcola e mostra i totali generali
@@ -116,8 +117,8 @@ def mostra_statistiche_docenti(df):
             docente_lezioni['Ore_fmt'] = docente_lezioni['Ore'].apply(format_ore_totali)
             
             # Rinomina colonne per miglior leggibilità e seleziona solo le necessarie
-            display_df = docente_lezioni[['Data', 'Orario', 'Denominazione Insegnamento', 'CFU', 'Ore_fmt']]
-            display_df.columns = ['Data', 'Orario', 'Insegnamento', 'CFU', 'Ore']
+            display_df = docente_lezioni[['Data', 'Orario', 'Dipartimento', 'Denominazione Insegnamento', 'CFU', 'Ore_fmt']]
+            display_df.columns = ['Data', 'Orario', 'Dipartimento', 'Insegnamento', 'CFU', 'Ore']
             
             # Visualizza i dettagli
             st.dataframe(display_df, use_container_width=True, hide_index=True)
