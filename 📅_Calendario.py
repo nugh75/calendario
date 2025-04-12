@@ -46,6 +46,13 @@ def main():
             st.markdown("### 🔍 Filtra il Calendario")
             st.write("Utilizza i filtri sottostanti per visualizzare le lezioni di tuo interesse.")
             
+            # Campo di ricerca testuale (prima di tutti gli altri filtri)
+            search_term = st.sidebar.text_input("Cerca nei record", 
+                                 placeholder="Docente, insegnamento, data...",
+                                 key="calendar_search")
+            
+            st.sidebar.markdown("---")
+            
             # Filtro per periodo (mese e intervallo di date)
             st.sidebar.subheader("📆 Periodo")
             mesi = sorted(df['Mese'].dropna().unique())
@@ -153,6 +160,15 @@ def main():
         
         # Applica i filtri
         filtered_df = df.copy()
+        
+        # Applica il filtro di ricerca testuale (se presente)
+        if search_term:
+            # Cerca in tutte le colonne di stringhe
+            mask = pd.Series(False, index=filtered_df.index)
+            for col in filtered_df.columns:
+                if filtered_df[col].dtype == 'object':  # Solo colonne di tipo object (stringhe)
+                    mask = mask | filtered_df[col].fillna('').astype(str).str.lower().str.contains(search_term.lower())
+            filtered_df = filtered_df[mask]
         
         # Filtro per mese
         if mese_selected:
