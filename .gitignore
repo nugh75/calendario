@@ -59,3 +59,7 @@ env/
 
 # Streamlit
 .streamlit/
+
+#log
+logs/
+*.log

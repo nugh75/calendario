@@ -8,10 +8,15 @@ import pandas as pd
 import streamlit as st
 import locale
 import datetime
+import traceback
 from typing import Union, Tuple, Dict, Any, List, Optional
 
 # Costanti per i file
 DATA_FOLDER = 'dati'
+DEFAULT_JSON_FILE = 'dati.json'
+DEFAULT_JSON_PATH = os.path.join(DATA_FOLDER, DEFAULT_JSON_FILE)
+
+# Manteniamo il vecchio path per compatibilità durante la migrazione
 DEFAULT_CSV_FILE = 'dati.csv'
 DEFAULT_CSV_PATH = os.path.join(DATA_FOLDER, DEFAULT_CSV_FILE)
 
@@ -104,47 +109,6 @@ def extract_date_components(date_str: str) -> Tuple[Optional[str], Optional[str]
         st.warning(f"Errore nell'estrazione dei componenti della data: {e}")
         return None, None, None
 
-def create_sample_excel():
-    """
-    Crea un file Excel di esempio con la struttura corretta per l'importazione.
-    
-    Returns:
-        str: Percorso del file Excel creato
-    """
-    # Crea un DataFrame di esempio con le colonne necessarie
-    sample_data = {col: [] for col in FULL_COLUMNS}
-    df = pd.DataFrame(sample_data)
-    
-    # Aggiungi una riga di esempio
-    example_row = {
-        'Data': '2025-04-28', 
-        'Orario': '14:30-16:45',
-        'Dipartimento': 'Area Trasversale - Canale A',
-        'Classe di concorso': 'Area Trasversale - Canale A',
-        'Insegnamento comune': 'Trasversale A',
-        'PeF60 all.1': 'D',
-        'PeF30 all.2': 'D',
-        'PeF36 all.5': 'D',
-        'PeF30 art.13': 'D',
-        'Codice insegnamento': '22911105',
-        'Denominazione Insegnamento': 'Pedagogia generale e interculturale',
-        'Docente': 'Scaramuzzo Gilberto',
-        'Aula': '',
-        'Link Teams': '',
-        'CFU': '0.5',
-        'Note': '',
-        'Giorno': 'Lunedì',
-        'Mese': 'Aprile',
-        'Anno': '2025'
-    }
-    df = pd.concat([df, pd.DataFrame([example_row])], ignore_index=True)
-    
-    # Salva il DataFrame in un file Excel
-    template_path = os.path.join(DATA_FOLDER, 'template_calendario.xlsx')
-    df.to_excel(template_path, index=False)
-    
-    return template_path
-
 def normalize_code(code_str: str) -> str:
     """
     Normalizza un codice insegnamento rimuovendo eventuali decimali.
@@ -186,152 +150,690 @@ def parse_date(date_str):
 
 def load_data() -> pd.DataFrame:
     """
-    Funzione centralizzata per caricare i dati del calendario.
+    Funzione centralizzata per caricare i dati del calendario da file JSON.
     
     Returns:
-        pd.DataFrame: Dataframe contenente i dati del calendario, o None in caso di errore
+        pd.DataFrame: Dataframe contenente i dati del calendario, o un DataFrame vuoto in caso di errore
     """
-    setup_locale()
-
-    # Controlla se il file dati.csv esiste
-    if not os.path.exists(DEFAULT_CSV_PATH):
-        # Se dati.csv non esiste, cerca un altro file CSV come fallback
-        csv_files = [f for f in os.listdir(DATA_FOLDER) if f.endswith('.csv')]
-        if not csv_files:
-            st.error("Nessun file CSV trovato nella cartella 'dati'")
-            return None
-        # Usa il file più recente come fallback
-        file_path = os.path.join(DATA_FOLDER, sorted(csv_files)[-1])
-    else:
-        file_path = DEFAULT_CSV_PATH
-    
     try:
-        # Carica il CSV
-        df = pd.read_csv(file_path, delimiter=';', encoding='utf-8', skiprows=3)
+        # Configurazione iniziale
+        setup_locale()
+        print_debug = True  # Attiva per ottenere output di debug dettagliato
         
-        # Rinomina le colonne per chiarezza
-        if len(df.columns) >= len(FULL_COLUMNS):
-            df.columns = FULL_COLUMNS
+        # Inizializza il logger se disponibile
+        try:
+            from log_utils import logger
+            log_available = True
+            logger.debug("Inizio caricamento dati da JSON...")
+        except ImportError:
+            log_available = False
+            if print_debug:
+                print("Logger non disponibile")
+        
+        # Inizializza un DataFrame vuoto con le colonne corrette
+        empty_df = pd.DataFrame(columns=FULL_COLUMNS)
+        
+        # Controlla se il file JSON esiste
+        if not os.path.exists(DEFAULT_JSON_PATH):
+            if log_available:
+                logger.warning(f"File JSON {DEFAULT_JSON_PATH} non trovato.")
+            
+            # Prova a cercare un file CSV esistente come fallback per la migrazione
+            if os.path.exists(DEFAULT_CSV_PATH):
+                if log_available:
+                    logger.info(f"Trovato file CSV. Tentativo di migrazione a JSON...")
+                
+                # Tenta di caricare il CSV e convertirlo a JSON (viene gestito separatamente nella funzione migrate_csv_to_json)
+                return migrate_csv_to_json()
+                
+            # Cerca altri file JSON come fallback
+            if not os.path.exists(DATA_FOLDER):
+                if log_available:
+                    logger.warning(f"Cartella {DATA_FOLDER} non trovata, creazione...")
+                os.makedirs(DATA_FOLDER, exist_ok=True)
+                return empty_df
+            
+            json_files = [f for f in os.listdir(DATA_FOLDER) if f.endswith('.json')]
+            if not json_files:
+                if log_available:
+                    logger.warning("Nessun file JSON trovato nella cartella 'dati'")
+                return empty_df
+                
+            # Usa il file JSON più recente come fallback
+            file_path = os.path.join(DATA_FOLDER, sorted(json_files)[-1])
+            if log_available:
+                logger.info(f"Usando file JSON alternativo: {file_path}")
         else:
-            # Se ci sono meno colonne del previsto
-            df.columns = FULL_COLUMNS[:len(df.columns)]
-            # Aggiungi colonne mancanti
-            for col in FULL_COLUMNS[len(df.columns):]:
-                df[col] = None
+            file_path = DEFAULT_JSON_PATH
+            if log_available:
+                logger.debug(f"File JSON trovato: {file_path}")
         
-        # Pulizia dei dati
-        # Filtra le righe che hanno almeno l'orario compilato e non vuoto
-        df = df[df['Orario'].notna() & (df['Orario'] != '')]
+        # FASE 1: Verifica che il file sia leggibile
+        if print_debug:
+            print(f"Verificando file JSON: {file_path}")
         
-        # Rimuovi i decimali dai codici insegnamento
-        if 'Codice insegnamento' in df.columns:
-            df['Codice insegnamento'] = df['Codice insegnamento'].apply(normalize_code)
+        if not os.path.isfile(file_path):
+            if log_available:
+                logger.error(f"Il percorso {file_path} non è un file valido.")
+            return empty_df
         
-        # Converti le date e gestisci gli errori
-        df['Data'] = df['Data'].apply(parse_date)
+        if os.path.getsize(file_path) == 0:
+            if log_available:
+                logger.warning(f"Il file JSON {file_path} è vuoto.")
+            return empty_df
         
-        # Rimuovi le righe con date non valide
-        df = df.dropna(subset=['Data'])
-        
-        # Estrai e aggiorna le colonne di Giorno, Mese e Anno
-        df['Giorno'] = df['Data'].dt.strftime('%A')
-        df['Mese'] = df['Data'].dt.strftime('%B')
-        df['Anno'] = df['Data'].dt.year.astype(str)  # Anno come stringa
-        
-        # Aggiorna il conteggio dei record nella sessione
-        st.session_state['total_records'] = len(df)
-        
-        return df
-        
+        # FASE 2: Lettura del file JSON
+        try:
+            if print_debug:
+                print("Tentativo di lettura del file JSON...")
+            
+            # Lettura del JSON con gestione robusta degli errori
+            df = pd.read_json(file_path, orient='records')
+            
+            if print_debug:
+                print(f"JSON caricato. Shape: {df.shape}, colonne: {df.columns.tolist()}")
+            
+            # Verifica delle colonne
+            if len(df.columns) < 4:  # Minimo necessario per i dati essenziali
+                if log_available:
+                    logger.warning(f"Il file JSON ha solo {len(df.columns)} colonne, potrebbero mancare dati essenziali.")
+            
+            # Assicurati che il dataframe abbia tutte le colonne necessarie
+            for col in FULL_COLUMNS:
+                if col not in df.columns:
+                    df[col] = None
+            
+            if print_debug:
+                print(f"Verifica colonne del dataframe: {df.columns.tolist()}")
+            
+            # FASE 3: Pulizia dei dati
+            if print_debug:
+                print("Inizio pulizia dati...")
+            
+            # Rimuovi righe completamente vuote
+            original_rows = len(df)
+            df = df.dropna(how='all')
+            if print_debug:
+                print(f"Righe dopo rimozione vuote: {len(df)} (rimosse {original_rows - len(df)})")
+            
+            # Filtra le righe che hanno almeno l'orario compilato
+            if 'Orario' in df.columns:
+                rows_before = len(df)
+                df = df[df['Orario'].notna() & (df['Orario'] != '')]
+                if print_debug:
+                    print(f"Righe dopo filtro orario: {len(df)} (rimosse {rows_before - len(df)})")
+            
+            # Normalizza i codici insegnamento
+            if 'Codice insegnamento' in df.columns:
+                if print_debug:
+                    print("Normalizzazione codici insegnamento...")
+                df['Codice insegnamento'] = df['Codice insegnamento'].apply(lambda x: normalize_code(x) if pd.notna(x) else '')
+            
+            # FASE 4: Gestione delle date
+            if print_debug:
+                print("Gestione delle date...")
+            
+            if 'Data' in df.columns:
+                if print_debug:
+                    print(f"Tipo della colonna Data prima della conversione: {df['Data'].dtype}")
+                    if len(df) > 0:
+                        print(f"Esempi valori Data: {df['Data'].head().tolist()}")
+                
+                # Converti le date in modo più robusto
+                # Nota: Con JSON, le date potrebbero già essere state parsate correttamente
+                try:
+                    # Verifica se le date sono già in formato datetime
+                    if not pd.api.types.is_datetime64_any_dtype(df['Data']):
+                        # Prima converti a stringa per uniformare il formato
+                        df['Data'] = df['Data'].astype(str)
+                        # Poi converti a datetime
+                        df['Data'] = pd.to_datetime(df['Data'], errors='coerce')
+                    
+                    if print_debug:
+                        print(f"Tipo della colonna Data dopo la conversione: {df['Data'].dtype}")
+                        if len(df) > 0:
+                            print(f"Esempi date convertite: {df['Data'].head().tolist()}")
+                    
+                    # Rimuovi le righe con date non valide
+                    rows_before = len(df)
+                    df = df.dropna(subset=['Data'])
+                    if print_debug:
+                        print(f"Righe dopo rimozione date invalide: {len(df)} (rimosse {rows_before - len(df)})")
+                    
+                    # Estrai e aggiorna le colonne di Giorno, Mese e Anno in modo sicuro
+                    if len(df) > 0:
+                        try:
+                            df['Giorno'] = df['Data'].dt.strftime('%A').str.capitalize()
+                            df['Mese'] = df['Data'].dt.strftime('%B').str.capitalize()
+                            df['Anno'] = df['Data'].dt.year.astype(str)
+                            if print_debug:
+                                print("Date elaborate con successo.")
+                        except Exception as date_comp_err:
+                            if print_debug:
+                                print(f"Errore durante l'estrazione dei componenti dalla data: {date_comp_err}")
+                            # Fallback: mantieni i valori esistenti o imposta valori predefiniti
+                except Exception as date_err:
+                    if print_debug:
+                        print(f"Errore durante la conversione delle date: {date_err}")
+            
+            # FASE 5: Gestione valori nulli
+            if print_debug:
+                print("Pulizia valori nulli e NaN...")
+            
+            # Sostituisci NaN con stringa vuota nelle colonne di testo
+            for col in df.select_dtypes(include=['object']).columns:
+                df[col] = df[col].fillna('')
+            
+            # Se ci sono colonne oggetto con valori 'nan' come stringhe, sostituisci con stringa vuota
+            for col in df.select_dtypes(include=['object']).columns:
+                df[col] = df[col].replace('nan', '')
+                df[col] = df[col].replace('None', '')
+            
+            # FASE 6: Finalizzazione
+            if print_debug:
+                print(f"Dati JSON caricati con successo. Totale record: {len(df)}")
+            
+            # Aggiorna il conteggio dei record nella sessione
+            st.session_state['total_records'] = len(df)
+            
+            return df
+            
+        except Exception as read_err:
+            if log_available:
+                logger.error(f"Errore durante la lettura del file JSON: {read_err}")
+            if print_debug:
+                print(f"Errore lettura JSON: {read_err}")
+            return empty_df
+    
     except Exception as e:
-        st.error(f"Errore durante il caricamento dei dati: {e}")
-        return None
+        # Cattura errori generali
+        error_msg = f"Errore durante il caricamento dei dati: {e}"
+        st.error(error_msg)
+        
+        import traceback
+        error_details = traceback.format_exc()
+        
+        try:
+            from log_utils import logger
+            logger.error(error_msg)
+            logger.error(f"Dettaglio: {error_details}")
+        except ImportError:
+            pass
+            
+        if print_debug:
+            print(error_msg)
+            print(f"Stack trace: {error_details}")
+        
+        # Restituisci un DataFrame vuoto per permettere di continuare l'importazione
+        return pd.DataFrame(columns=FULL_COLUMNS)
+
+def migrate_csv_to_json() -> pd.DataFrame:
+    """
+    Migra i dati da un file CSV esistente a un nuovo file JSON.
+    Questa funzione è utilizzata per facilitare la transizione dal vecchio formato al nuovo.
+    
+    Returns:
+        pd.DataFrame: DataFrame con i dati migrati o un DataFrame vuoto in caso di errore
+    """
+    try:
+        # Inizializza il logger se disponibile
+        try:
+            from log_utils import logger
+            log_available = True
+            logger.info("Avvio migrazione da CSV a JSON...")
+        except ImportError:
+            log_available = False
+        
+        # Verifica se il file CSV esiste
+        if not os.path.exists(DEFAULT_CSV_PATH):
+            st.warning(f"Nessun file CSV trovato in {DEFAULT_CSV_PATH} per la migrazione.")
+            return pd.DataFrame(columns=FULL_COLUMNS)
+        
+        try:
+            # Leggi il file CSV - uso parametri compatibili con pandas ≥ 1.3.0
+            # 'on_bad_lines' è il sostituto di 'error_bad_lines' e non c'è più 'warn_bad_lines'
+            try:
+                df = pd.read_csv(DEFAULT_CSV_PATH, delimiter=';', encoding='utf-8', skiprows=3,
+                                on_bad_lines='skip')
+            except TypeError:
+                # Fallback per versioni precedenti di pandas
+                df = pd.read_csv(DEFAULT_CSV_PATH, delimiter=';', encoding='utf-8', skiprows=3,
+                                error_bad_lines=False, warn_bad_lines=True)
+            
+            # Verifica se il DataFrame ha dati
+            if df.empty:
+                st.warning("Il file CSV è vuoto, nessun dato da migrare.")
+                return pd.DataFrame(columns=FULL_COLUMNS)
+            
+            # Standardizza i nomi delle colonne
+            if len(df.columns) >= len(FULL_COLUMNS):
+                df.columns = FULL_COLUMNS
+            else:
+                # Se ci sono meno colonne del previsto
+                df.columns = FULL_COLUMNS[:len(df.columns)]
+                # Aggiungi colonne mancanti
+                for col in FULL_COLUMNS[len(df.columns):]:
+                    df[col] = None
+            
+            # Pulizia e normalizzazione dei dati
+            # Filtra le righe che hanno almeno l'orario compilato
+            df = df[df['Orario'].notna() & (df['Orario'] != '')]
+            
+            # Converti le date
+            df['Data'] = pd.to_datetime(df['Data'], errors='coerce')
+            
+            # Rimuovi le righe con date non valide
+            df = df.dropna(subset=['Data'])
+            
+            # Aggiorna i campi derivati dalla data
+            df['Giorno'] = df['Data'].dt.strftime('%A').str.capitalize()
+            df['Mese'] = df['Data'].dt.strftime('%B').str.capitalize()
+            df['Anno'] = df['Data'].dt.year.astype(str)
+            
+            # Salva i dati nel nuovo formato JSON
+            os.makedirs(DATA_FOLDER, exist_ok=True)
+            df.to_json(DEFAULT_JSON_PATH, orient='records', date_format='iso')
+            
+            st.success(f"✓ Migrazione completata: {len(df)} record importati da CSV a JSON.")
+            
+            if log_available:
+                logger.info(f"Migrazione CSV → JSON completata con successo: {len(df)} record.")
+            
+            return df
+            
+        except Exception as read_err:
+            st.error(f"Errore durante la lettura del file CSV per la migrazione: {read_err}")
+            if log_available:
+                logger.error(f"Errore durante la migrazione CSV → JSON: {read_err}")
+            return pd.DataFrame(columns=FULL_COLUMNS)
+            
+    except Exception as e:
+        st.error(f"Errore durante la migrazione dei dati: {e}")
+        import traceback
+        if log_available:
+            logger.error(f"Errore durante la migrazione CSV → JSON: {e}")
+            logger.error(f"Dettaglio: {traceback.format_exc()}")
+        
+        return pd.DataFrame(columns=FULL_COLUMNS)
 
 def save_data(df: pd.DataFrame, replace_file: bool = False) -> str:
     """
-    Salva un dataframe nel file CSV standard del calendario.
+    Salva un dataframe nel file JSON standard del calendario.
     
     Args:
         df: DataFrame da salvare
-        replace_file: Se True, sovrascrive completamente il file esistente invece di concatenare i dati
+        replace_file: Se True, sovrascrive completamente il file esistente invece di 
+                      tentare di unire con dati esistenti
         
     Returns:
         str: Percorso del file salvato
     """
     os.makedirs(DATA_FOLDER, exist_ok=True)
     
+    # Importa il logger se non è già disponibile
     try:
+        from log_utils import logger
+        logger.info(f"Avvio salvataggio dati: {len(df)} record, replace_file={replace_file}")
+    except ImportError:
+        pass  # Se il logger non è disponibile, continua senza errori
+    
+    # Definizione di un container di debug fittizio che usa solo il logger
+    class LoggerDebugContainer:
+        def text(self, message): 
+            try:
+                from log_utils import logger
+                logger.debug(message)
+            except ImportError:
+                pass
+        def info(self, message): 
+            try:
+                from log_utils import logger
+                logger.info(message)
+            except ImportError:
+                pass
+        def success(self, message): 
+            try:
+                from log_utils import logger
+                logger.info(f"SUCCESS: {message}")
+            except ImportError:
+                pass
+        def warning(self, message): 
+            try:
+                from log_utils import logger
+                logger.warning(message)
+            except ImportError:
+                pass
+        def error(self, message): 
+            try:
+                from log_utils import logger
+                logger.error(message)
+            except ImportError:
+                pass
+        def expander(self, title): return self
+        def __enter__(self): return self
+        def __exit__(self, exc_type, exc_val, exc_tb): pass
+    
+    # Usa un container fittizio per evitare problemi con Streamlit
+    debug_container = LoggerDebugContainer()
+    
+    try:
+        debug_container.text("Fase 1: Preparazione del DataFrame...")
+        try:
+            logger.debug(f"DF info - shape: {df.shape}, columns: {list(df.columns)}")
+            # Log dei primi record per debug
+            logger.debug(f"Prime 3 righe del dataframe:\n{df.head(3)}")
+        except:
+            pass
+        
+        # Gestione robusta dei tipi di dati - crea una copia per evitare modifiche indesiderate
+        df = df.copy()
+        
         # Assicurati che il dataframe abbia tutte le colonne necessarie
         for col in FULL_COLUMNS:
             if col not in df.columns:
                 df[col] = None
         
-        # Leggi il file esistente se presente e se non stiamo sostituendo completamente il file
-        if os.path.exists(DEFAULT_CSV_PATH) and not replace_file:
-            existing_df = pd.read_csv(DEFAULT_CSV_PATH, delimiter=';', encoding='utf-8', skiprows=3)
+        # Gestione robusta delle date
+        debug_container.text("Fase 2: Normalizzazione delle date...")
+        
+        # Converti tutte le date in formato datetime in modo robusto
+        try:
+            # Salva una copia del formato originale delle date per debug
+            original_data_format = str(df['Data'].dtype)
+            debug_container.text(f"Formato originale Data: {original_data_format}")
             
-            # Assicurati che il dataframe esistente abbia tutte le colonne richieste
-            if len(existing_df.columns) == len(FULL_COLUMNS):
-                existing_df.columns = FULL_COLUMNS
+            # Se la colonna Data contiene valori datetime, non è necessario convertirla
+            if pd.api.types.is_datetime64_any_dtype(df['Data']):
+                debug_container.text("La colonna Data è già in formato datetime.")
             else:
-                # Se il numero di colonne non corrisponde, sistemale
-                existing_cols = min(len(existing_df.columns), len(FULL_COLUMNS))
-                existing_df.columns = FULL_COLUMNS[:existing_cols]
+                # Altrimenti, tenta la conversione
+                debug_container.text("Conversione della colonna Data in formato datetime...")
+                df['Data'] = pd.to_datetime(df['Data'], errors='coerce')
+                debug_container.text(f"Conversione completata. Nuovo formato: {df['Data'].dtype}")
+            
+            # Rimuovi le righe con date non valide
+            valid_rows_before = len(df)
+            df = df.dropna(subset=['Data'])
+            valid_rows_after = len(df)
+            debug_container.text(f"Date non valide rimosse: {valid_rows_before - valid_rows_after}")
+            
+        except Exception as date_err:
+            debug_container.error(f"Errore durante la normalizzazione delle date: {date_err}")
+            import traceback
+            debug_container.error(f"Dettaglio: {traceback.format_exc()}")
+            raise
+        
+        # Leggi il file JSON esistente se presente e se non stiamo sostituendo completamente il file
+        if os.path.exists(DEFAULT_JSON_PATH) and not replace_file:
+            debug_container.text("Fase 3: Caricamento del file JSON esistente...")
+            try:
+                existing_df = pd.read_json(DEFAULT_JSON_PATH, orient='records')
+                debug_container.success(f"File JSON caricato con successo")
                 
-                # Aggiungi le colonne mancanti
-                for col in FULL_COLUMNS[existing_cols:]:
-                    existing_df[col] = None
-            
-            # Standardizza le date in entrambi i dataframe
-            existing_df['Data'] = existing_df['Data'].apply(format_date)
-            df['Data'] = df['Data'].apply(format_date)
-            
-            # Log di debug
-            st.info(f"Record esistenti: {len(existing_df)}, Nuovi record: {len(df)}")
-            
-            # Combina i dati
-            df = pd.concat([existing_df, df], ignore_index=True)
+                # Assicurati che il dataframe esistente abbia tutte le colonne richieste
+                for col in FULL_COLUMNS:
+                    if col not in existing_df.columns:
+                        existing_df[col] = None
+                
+                debug_container.text("Fase 4: Standardizzazione delle date...")
+                
+                # Converti le date esistenti in formato datetime se necessario
+                try:
+                    if not pd.api.types.is_datetime64_any_dtype(existing_df['Data']):
+                        existing_df['Data'] = pd.to_datetime(existing_df['Data'], errors='coerce')
+                    debug_container.text(f"Conversione date esistenti completata: {existing_df['Data'].dtype}")
+                except Exception as existing_date_err:
+                    debug_container.warning(f"Avviso durante la conversione delle date esistenti: {existing_date_err}")
+                
+                # Log di debug
+                debug_container.info(f"Record esistenti: {len(existing_df)}, Nuovi record: {len(df)}")
+                
+                # Combina i dati
+                debug_container.text("Fase 5: Combinazione dei dati...")
+                df = pd.concat([existing_df, df], ignore_index=True)
+                debug_container.text(f"Combinazione completata: {len(df)} record totali")
+            except Exception as json_err:
+                debug_container.warning(f"Errore durante il caricamento del file JSON esistente: {json_err}")
+                debug_container.info("Creazione di un nuovo file JSON...")
+                # Se c'è un errore nella lettura del JSON, procedi con il dataframe corrente
 
         # Pulizia dei dati
+        debug_container.text("Fase 6: Pulizia dei dati...")
         df = df.dropna(how='all')  # Rimuovi righe vuote
         
         # Rimuovi duplicati basati su colonne chiave
+        pre_dedup = len(df)
         df = df.drop_duplicates(
             subset=['Data', 'Orario', 'Docente', 'Denominazione Insegnamento'], 
             keep='last'
         )
+        post_dedup = len(df)
+        debug_container.text(f"Duplicati rimossi: {pre_dedup - post_dedup}")
             
         # Normalizza i codici insegnamento
         if 'Codice insegnamento' in df.columns:
             df['Codice insegnamento'] = df['Codice insegnamento'].apply(normalize_code)
 
-        # Ordina il dataframe per data e orario
-        df['Data_temp'] = pd.to_datetime(df['Data'], format='%A %d %B %Y', errors='coerce')
-        df = df.sort_values(['Data_temp', 'Orario'])
-        df = df.drop('Data_temp', axis=1)
+        # Ordina il dataframe per data e orario in modo robusto
+        debug_container.text("Fase 7: Ordinamento dei dati...")
+        try:
+            # Non c'è bisogno di creare una colonna temporanea se Data è già in formato datetime
+            df = df.sort_values(['Data', 'Orario'])
+        except Exception as sort_err:
+            debug_container.warning(f"Avviso durante l'ordinamento: {sort_err}. Usando metodo alternativo...")
+            # Metodo di fallback
+            try:
+                # In caso di problemi, crea una colonna temporanea con conversione
+                df['Data_temp'] = pd.to_datetime(df['Data'], errors='coerce')
+                df = df.sort_values(['Data_temp', 'Orario'])
+                df = df.drop('Data_temp', axis=1)
+            except Exception as fallback_err:
+                debug_container.error(f"Anche il metodo alternativo ha fallito: {fallback_err}")
+                # Se anche questo fallisce, procedi senza ordinamento
 
-        # Aggiungi le intestazioni per il formato standard
-        with open(DEFAULT_CSV_PATH, 'w', encoding='utf-8') as f:
-            for header in CSV_HEADERS:
-                f.write(header)
-
-        # Aggiorna Giorno, Mese e Anno dalle date
+        # Se stiamo sostituendo il file o se non esiste, lo creiamo da zero
+        debug_container.text("Fase 8: Preparazione del file CSV...")
+        file_exists = os.path.exists(DEFAULT_CSV_PATH)
+        create_new_file = replace_file or not file_exists
+        
+        # Salviamo l'informazione se stiamo creando un nuovo file per dopo
+        create_new_file_with_headers = create_new_file
+        
+        if create_new_file:
+            with open(DEFAULT_CSV_PATH, 'w', encoding='utf-8') as f:
+                for header in CSV_HEADERS:
+                    f.write(header)
+        
+        # Assicurati che tutte le date siano in formato datetime prima di procedere
+        debug_container.text("Fase 9: Normalizzazione finale delle date...")
+        
+        # Verifica se ci sono righe con dati incompleti e registrale per il log
+        missing_data_rows = []
         for idx, row in df.iterrows():
-            giorno, mese, anno = extract_date_components(row['Data'])
-            df.at[idx, 'Giorno'] = giorno
-            df.at[idx, 'Mese'] = mese
-            df.at[idx, 'Anno'] = anno
+            missing_fields = []
+            for critical_col in ['Data', 'Orario', 'Docente', 'Denominazione Insegnamento']:
+                if pd.isna(row.get(critical_col)) or row.get(critical_col) == '':
+                    missing_fields.append(critical_col)
             
+            if missing_fields:
+                row_info = {
+                    'Indice': idx, 
+                    'Campi mancanti': missing_fields,
+                    'Docente': row.get('Docente', 'N/A'),
+                    'Denominazione': row.get('Denominazione Insegnamento', 'N/A')
+                }
+                missing_data_rows.append(row_info)
+        
+        # Log delle righe con dati incompleti
+        if missing_data_rows:
+            debug_container.warning(f"⚠️ Trovate {len(missing_data_rows)} righe con dati incompleti")
+            with debug_container.expander("Mostra righe con dati incompleti"):
+                for row_info in missing_data_rows:
+                    debug_container.text(f"Riga {row_info['Indice']}: {row_info['Docente']} - {row_info['Denominazione']}")
+                    debug_container.text(f"   Campi mancanti: {', '.join(row_info['Campi mancanti'])}")
+        
+        # Rimuovi le righe con dati incompleti essenziali
+        total_rows_before = len(df)
+        df_cleaned = df.dropna(subset=['Data', 'Orario', 'Docente', 'Denominazione Insegnamento'])
+        total_rows_after = len(df_cleaned)
+        
+        if total_rows_before > total_rows_after:
+            debug_container.warning(f"⚠️ Rimosse {total_rows_before - total_rows_after} righe con dati incompleti essenziali")
+            # Sostituisci il dataframe originale con quello pulito
+            df = df_cleaned
+        
+        try:
+            # Converte la colonna Data in formato datetime
+            debug_container.text("Fase 9.1: Conversione date in formato datetime...")
+            
+            # Backup della colonna originale per debug
+            df['Data_original'] = df['Data'].copy()
+            
+            # Converti in datetime in modo più affidabile
+            df['Data'] = pd.to_datetime(df['Data'], errors='coerce')
+            
+            # Verifica se ci sono date non valide
+            invalid_dates = df['Data'].isna().sum()
+            if invalid_dates > 0:
+                debug_container.warning(f"⚠️ Trovate {invalid_dates} date non valide che verranno rimosse")
+                # Rimuovi righe con date non valide
+                df = df.dropna(subset=['Data'])
+                debug_container.warning(f"Rimossi {invalid_dates} record con date non valide")
+                
+            # Ora che abbiamo le date in formato datetime, aggiorna Giorno, Mese e Anno
+            debug_container.text("Fase 9.2: Aggiornamento campi data derivati...")
+            
+            # Genera Giorno, Mese e Anno direttamente dagli oggetti datetime
+            # Questo metodo è più affidabile rispetto all'uso di una funzione lambda
+            df['Giorno'] = df['Data'].dt.strftime('%A').str.capitalize()
+            df['Mese'] = df['Data'].dt.strftime('%B').str.capitalize()
+            df['Anno'] = df['Data'].dt.year.astype(str)
+            
+            debug_container.success(f"✅ Aggiornati {len(df)} record con Giorno, Mese e Anno")
+            
+            # Controllo di sicurezza per verificare che non ci siano NaN nei campi critici
+            for col in ['Giorno', 'Mese', 'Anno', 'Orario', 'Docente', 'Denominazione Insegnamento']:
+                if col in df.columns and df[col].isna().any():
+                    na_count = df[col].isna().sum()
+                    debug_container.warning(f"Trovati {na_count} valori NaN nella colonna {col}, sostituiti con stringhe vuote")
+                    df[col] = df[col].fillna("")
+            
+            # Se ci sono colonne oggetto con valori 'nan' come stringhe, sostituisci con stringa vuota
+            for col in df.select_dtypes(include=['object']).columns:
+                df[col] = df[col].replace('nan', '')
+                df[col] = df[col].replace('None', '')
+                # Converti anche i NaN effettivi in stringa vuota
+                df[col] = df[col].fillna('')
+            
+        except Exception as component_err:
+            debug_container.error(f"❌ Errore durante l'aggiornamento dei componenti data: {component_err}")
+            import traceback
+            debug_container.error(f"Dettaglio: {traceback.format_exc()}")
+            raise  # Rilancia l'eccezione per essere gestita dal blocco try principale
+        
+        # Per evitare errori nella scrittura del CSV, convertiamo le date in formato standard YYYY-MM-DD
+        debug_container.text("Fase 10: Preparazione formato date per CSV...")
+        try:
+            # Crea una copia delle date in formato stringa ISO per il salvataggio CSV
+            df['Data_ISO'] = df['Data'].dt.strftime('%Y-%m-%d')
+            
+            # Verifica che tutte le conversioni abbiano funzionato
+            if df['Data_ISO'].isna().any():
+                na_count = df['Data_ISO'].isna().sum()
+                debug_container.warning(f"❗ Ci sono ancora {na_count} date non convertite correttamente")
+                # Sostituisci i NaN con stringa vuota
+                df['Data_ISO'] = df['Data_ISO'].fillna('')
+            
+            # Sostituisci temporaneamente per la scrittura del CSV
+            df_final = df.copy()
+            df_final['Data'] = df['Data_ISO']
+            
+            # Rimuovi colonne temporanee
+            df_final = df_final.drop(['Data_ISO', 'Data_original'], axis=1, errors='ignore')
+            
+            # PUNTO CRITICO: Gestione dei valori NaN in tutte le colonne
+            debug_container.text("Fase 10.1: Sostituzione di tutti i valori NaN con stringhe vuote...")
+            
+            # Forza conversione delle colonne problematiche in stringhe
+            problematic_columns = ['Aula', 'Link Teams', 'Note']
+            for col in problematic_columns:
+                if col in df_final.columns:
+                    debug_container.text(f"Conversione forzata della colonna '{col}' da {df_final[col].dtype} a stringa")
+                    # Prima sostituisci eventuali NaN con stringa vuota
+                    df_final[col] = df_final[col].fillna('')
+                    # Poi converti in stringa
+                    df_final[col] = df_final[col].astype(str)
+                    # Rimuovi valori 'nan', 'None', etc. che potrebbero essere stati introdotti (più completo)
+                    df_final[col] = df_final[col].replace(['nan', 'None', 'NaN', 'none', '<NA>', 'null'], '', regex=False)
+                    # Rimuovi '.0' dai numeri interi
+                    df_final[col] = df_final[col].apply(lambda x: x.replace('.0', '') if isinstance(x, str) and x.endswith('.0') else x)
+                    # Assicurati che il tipo sia object (string)
+                    df_final[col] = df_final[col].astype('object')
+                    debug_container.text(f"  - Dopo conversione: {df_final[col].dtype}")
+            
+            # Converti tutti i valori NaN in stringhe vuote in tutte le altre colonne
+            for col in df_final.columns:
+                if col not in problematic_columns:  # Salta le colonne già gestite
+                    # Gestisci i tipi float con NaN
+                    if df_final[col].dtype == 'float64':
+                        # Converti in stringa per evitare il valore 'nan' nel CSV
+                        df_final[col] = df_final[col].fillna('').astype(str)
+                        # Rimuovi il '.0' dai numeri interi
+                        df_final[col] = df_final[col].apply(lambda x: x.replace('.0', '') if x.endswith('.0') else x)
+                    else:
+                        # Per tutti gli altri tipi, basta fillna
+                        df_final[col] = df_final[col].fillna('')
+                    
+            # Rimuovi le stringhe letterali 'nan' o 'None' che potrebbero esistere
+            for col in df_final.select_dtypes(include=['object']).columns:
+                df_final[col] = df_final[col].replace('nan', '')
+                df_final[col] = df_final[col].replace('None', '')
+                df_final[col] = df_final[col].replace('NaN', '')
+                
+            debug_container.success("✅ Valori NaN gestiti correttamente")
+            
+            debug_container.success("✅ Date convertite con successo in formato ISO")
+            
+            # Usa questo df_final per il salvataggio
+            df = df_final
+            
+        except Exception as csv_err:
+            debug_container.error(f"❌ Errore durante la preparazione del formato CSV: {csv_err}")
+            import traceback
+            debug_container.error(f"Dettaglio errore: {traceback.format_exc()}")
+            raise  # Rilancia l'eccezione per essere gestita dal blocco try principale
+        
         # Riordina le colonne
         df = df[FULL_COLUMNS]
             
-        # Salva il dataframe
-        df.to_csv(DEFAULT_CSV_PATH, mode='a', index=False, sep=';', encoding='utf-8')
+        # Salva il dataframe in formato JSON
+        debug_container.text("Fase 11: Scrittura del file JSON...")
         
-        st.success(f"Dati salvati correttamente nel file {DEFAULT_CSV_FILE}")
+        # Il formato JSON gestisce automaticamente i tipi di dati, incluse le date
+        # Qui non abbiamo bisogno di preoccuparci delle intestazioni come facevamo con CSV
+        df.to_json(DEFAULT_JSON_PATH, orient='records', date_format='iso')
+        
+        # Per compatibilità, manteniamo anche il file CSV
+        debug_container.text("Fase 12: Aggiornamento file CSV per compatibilità (opzionale)...")
+        try:
+            # Salva anche il vecchio formato CSV per compatibilità
+            with open(DEFAULT_CSV_PATH, 'w', encoding='utf-8') as f:
+                for header in CSV_HEADERS:
+                    f.write(header)
+            
+            df.to_csv(DEFAULT_CSV_PATH, mode='a', index=False, header=False, sep=';', encoding='utf-8')
+            debug_container.text("✅ File CSV di backup creato con successo")
+        except Exception as csv_err:
+            debug_container.warning(f"Non è stato possibile creare il file CSV di backup: {csv_err}")
+        
+        st.success(f"Dati salvati correttamente nel file {DEFAULT_JSON_FILE}")
+        debug_container.success("✅ Salvataggio completato con successo")
         
     except Exception as e:
         st.error(f"Errore durante il salvataggio dei dati: {e}")
+        debug_container.error(f"❌ Errore durante il salvataggio: {e}")
+        import traceback
+        debug_container.error(f"Dettaglio: {traceback.format_exc()}")
         
     return DEFAULT_CSV_PATH
 
@@ -361,786 +863,190 @@ def delete_record(df: pd.DataFrame, index: int) -> pd.DataFrame:
     
     return df
 
-def process_excel_upload(uploaded_file) -> pd.DataFrame:
+def process_excel_upload(uploaded_file, debug_container=None) -> pd.DataFrame:
     """
     Processa un file Excel caricato dall'utente.
+    I campi Giorno, Mese e Anno vengono generati automaticamente dalla colonna Data.
     
     Args:
         uploaded_file: File Excel caricato tramite st.file_uploader
+        debug_container: Container Streamlit per i messaggi di debug (opzionale)
         
     Returns:
         pd.DataFrame: DataFrame con i dati del file, o None in caso di errore
     """
     if uploaded_file is None:
+        st.warning("Nessun file selezionato per l'importazione.")
         return None
+    
+    # Crea un debug_container fittizio se non fornito
+    if debug_container is None:
+        class DummyContainer:
+            def text(self, message): 
+                # Si può aggiungere un logger qui se necessario
+                try:
+                    from log_utils import logger
+                    logger.debug(message)
+                except ImportError:
+                    pass
+            def info(self, message): 
+                try:
+                    from log_utils import logger
+                    logger.info(message)
+                except ImportError:
+                    pass
+            def success(self, message): 
+                try:
+                    from log_utils import logger
+                    logger.info(f"SUCCESS: {message}")
+                except ImportError:
+                    pass
+            def warning(self, message): 
+                try:
+                    from log_utils import logger
+                    logger.warning(message)
+                except ImportError:
+                    pass
+            def error(self, message): 
+                try:
+                    from log_utils import logger
+                    logger.error(message)
+                except ImportError:
+                    pass
+            def expander(self, title): return self
+            def __enter__(self): return self
+            def __exit__(self, exc_type, exc_val, exc_tb): pass
+        
+        debug_container = DummyContainer()
         
     try:
+        debug_container.text("Avvio processo di importazione Excel...")
         setup_locale()
         
-        # Leggi il file Excel
-        df = pd.read_excel(uploaded_file, skiprows=3)
+        # Definisci i tipi di dati attesi per le colonne, forzando stringa per quelle problematiche
+        expected_dtypes = {
+            'Aula': str,
+            'Link Teams': str,
+            'Note': str,
+            'CFU': str,  # Leggi come stringa per gestire virgole/punti
+            'Codice insegnamento': str # Leggi come stringa per preservare formati
+        }
+        # Assicurati che tutte le colonne base siano definite, altrimenti usa 'object'
+        for col in BASE_COLUMNS:
+            if col not in expected_dtypes:
+                expected_dtypes[col] = object # Default a object (stringa) se non specificato
+
+        try:
+            # Leggi il file Excel specificando i tipi di dati
+            df = pd.read_excel(uploaded_file, skiprows=3, dtype=expected_dtypes)
+            
+            # Verifica iniziale della struttura del file
+            if len(df) == 0:
+                st.error("⚠️ Importazione fallita: Il file Excel caricato è vuoto.")
+                return None
+                
+            if len(df.columns) < 4:  # Minimo di colonne essenziali (Data, Orario, Docente, Denominazione)
+                st.error("⚠️ Importazione fallita: Il file Excel non ha la struttura corretta. Mancano colonne essenziali.")
+                st.info("Scarica il template per vedere la struttura corretta.")
+                return None
+                
+        except Exception as excel_err:
+            st.error(f"⚠️ Importazione fallita: Errore nella lettura del file Excel. {excel_err}")
+            st.info("Assicurati che il file sia nel formato Excel (.xlsx o .xls) e che non sia danneggiato.")
+            return None
+
+        # Gestisci solo le colonne essenziali (senza Giorno, Mese, Anno)
+        essential_columns = BASE_COLUMNS  # Colonne essenziali escludendo Giorno, Mese, Anno
         
-        # Gestisci le colonne
-        if len(df.columns) <= len(BASE_COLUMNS):
-            # Se ci sono meno colonne del previsto
-            df.columns = BASE_COLUMNS[:len(df.columns)]
-            # Aggiungi colonne mancanti
-            for col in BASE_COLUMNS[len(df.columns):]:
+        # Se ci sono meno colonne del previsto
+        if len(df.columns) <= len(essential_columns):
+            # Assegna i nomi delle colonne disponibili
+            df.columns = essential_columns[:len(df.columns)]
+            # Aggiungi colonne essenziali mancanti
+            for col in essential_columns[len(df.columns):]:
                 df[col] = None
         else:
-            # Se ci sono più colonne del previsto
-            df = df.iloc[:, :len(BASE_COLUMNS)]
-            df.columns = BASE_COLUMNS
+            # Se ci sono più colonne del previsto, prendi solo le colonne essenziali
+            df = df.iloc[:, :len(essential_columns)]
+            df.columns = essential_columns
         
-        # Pulizia dei dati
-        df = df[df['Orario'].notna() & (df['Orario'] != '')]
+        # Pulizia IMMEDIATA dei dati dopo la lettura
+        # Sostituisci tutti i NaN con stringhe vuote
+        df = df.fillna('')
+        # Rimuovi le stringhe 'nan', 'None', etc.
+        for col in df.columns:
+            if df[col].dtype == 'object':
+                 df[col] = df[col].replace(['nan', 'None', 'NaN', 'none', '<NA>', 'null'], '', regex=False)
         
-        # Processa le date
-        date_info = []
-        for date_str in df['Data']:
-            if pd.isna(date_str):
-                date_info.append({
-                    'data': None,
-                    'giorno': None,
-                    'mese': None,
-                    'anno': None
-                })
-                continue
+        # Filtra le righe con Orario mancante
+        initial_rows = len(df)
+        df = df[df['Orario'] != '']
+        rows_after_orario = len(df)
+        
+        if rows_after_orario < initial_rows:
+            debug_container.warning(f"Rimosse {initial_rows - rows_after_orario} righe senza orario")
+            
+        # Converti le date in formato datetime
+        df['Data'] = pd.to_datetime(df['Data'], errors='coerce')
+        
+        # Rimuovi le righe con date non valide
+        rows_before_date_filter = len(df)
+        df = df.dropna(subset=['Data'])
+        rows_after_date_filter = len(df)
+        
+        # Mostra avviso se sono state rimosse righe per date non valide
+        if rows_after_date_filter < rows_before_date_filter:
+            debug_container.warning(f"Rimosse {rows_before_date_filter - rows_after_date_filter} righe con date non valide")
+            if rows_after_date_filter == 0:
+                st.error("⚠️ Importazione fallita: Tutte le date nel file sono non valide o in un formato non riconosciuto.")
+                st.info("Controlla che le date siano nel formato YYYY-MM-DD o altro formato standard.")
+                return None
+        
+        # Genera automaticamente i campi Giorno, Mese e Anno dalla colonna Data
+        df['Giorno'] = df['Data'].dt.strftime('%A').str.capitalize()
+        df['Mese'] = df['Data'].dt.strftime('%B').str.capitalize()
+        df['Anno'] = df['Data'].dt.year.astype(str)
+        
+        # Gestisci CFU (converti a float dopo aver pulito)
+        if 'CFU' in df.columns:
+            df['CFU'] = df['CFU'].astype(str).str.replace(',', '.')
+            df['CFU'] = pd.to_numeric(df['CFU'], errors='coerce').fillna(0.0) # Convert to float, fill NaN with 0.0
+
+        # Gestisci Codice insegnamento (rimuovi .0 se presente)
+        if 'Codice insegnamento' in df.columns:
+             df['Codice insegnamento'] = df['Codice insegnamento'].astype(str).apply(lambda x: x.split('.')[0] if '.' in x else x)
+
+        # Verifica campi essenziali
+        missing_fields_rows = 0
+        for idx, row in df.iterrows():
+            if (pd.isna(row['Docente']) or row['Docente'] == '') or (pd.isna(row['Denominazione Insegnamento']) or row['Denominazione Insegnamento'] == ''):
+                missing_fields_rows += 1
                 
-            try:
-                # Prova prima il formato ISO
-                date = pd.to_datetime(date_str)
-                date_info.append({
-                    'data': date.strftime("%A %d %B %Y").lower(),
-                    'giorno': date.strftime("%A").capitalize(),
-                    'mese': date.strftime("%B").capitalize(),
-                    'anno': str(date.year)
-                })
-            except:
-                try:
-                    # Se è già nel formato italiano
-                    date = pd.to_datetime(date_str, format="%A %d %B %Y")
-                    date_info.append({
-                        'data': date_str.lower(),
-                        'giorno': date.strftime("%A").capitalize(),
-                        'mese': date.strftime("%B").capitalize(),
-                        'anno': str(date.year)
-                    })
-                except:
-                    date_info.append({
-                        'data': None,
-                        'giorno': None,
-                        'mese': None,
-                        'anno': None
-                    })
-        
-        # Aggiorna il DataFrame con le informazioni di data
-        date_info_df = pd.DataFrame(date_info)
-        df['Data'] = date_info_df['data']
-        df['Giorno'] = date_info_df['giorno']
-        df['Mese'] = date_info_df['mese']
-        df['Anno'] = date_info_df['anno']
+        if missing_fields_rows > 0:
+            debug_container.warning(f"Trovate {missing_fields_rows} righe con dati incompleti (manca docente o denominazione insegnamento)")
+
+        # Log dei risultati
+        record_count = len(df)
+        if record_count > 0:
+            st.success(f"✅ File Excel elaborato con successo: {record_count} record validi importati.")
+        else:
+            st.error("⚠️ Importazione fallita: Nessun record valido trovato nel file.")
+            return None
+            
+        try:
+            from log_utils import logger
+            logger.info(f"File Excel processato: {len(df)} record validi. Tipi dopo process_excel_upload: {df.dtypes.to_dict()}")
+        except ImportError:
+            pass
         
         return df
     except Exception as e:
-        st.error(f"Errore durante la lettura del file: {e}")
+        error_message = f"Errore durante l'elaborazione del file: {e}"
+        st.error(f"⚠️ Importazione fallita: {error_message}")
+        st.info("Dettagli tecnici dell'errore sono stati registrati nei log.")
+        debug_container.error(error_message)
+        debug_container.error(f"Dettaglio: {traceback.format_exc()}")
         return None
-
-def edit_record(df: pd.DataFrame, index: int) -> pd.DataFrame:
-    """
-    Modifica un singolo record del calendario e lo salva automaticamente.
-    
-    Args:
-        df: DataFrame contenente i dati
-        index: Indice del record da modificare
-        
-    Returns:
-        pd.DataFrame: DataFrame aggiornato con le modifiche
-    """
-    st.subheader(f"Modifica record #{index + 1}")
-    
-    if index < 0 or index >= len(df):
-        st.error(f"Indice non valido: {index}")
-        return df
-    
-    record = df.iloc[index].copy()
-    
-    # Layout a colonne per i campi del form
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        # Usa il formato data originale per la visualizzazione e modifica
-        data_str = record['Data'].strftime('%A %d %B %Y') if pd.notna(record['Data']) else ""
-        new_data = st.text_input("Data (formato: lunedì 14 aprile 2025)", value=data_str, key=f"data_{index}")
-        
-        new_orario = st.text_input("Orario (formato: 00:00-00:00)", value=record['Orario'] if pd.notna(record['Orario']) else "", key=f"orario_{index}")
-        
-        new_dipartimento = st.text_input("Dipartimento", value=record['Dipartimento'] if pd.notna(record['Dipartimento']) else "", key=f"dipartimento_{index}")
-        
-        new_classe_concorso = st.text_input("Classe di concorso", value=record['Classe di concorso'] if pd.notna(record['Classe di concorso']) else "", key=f"classe_concorso_{index}")
-        
-        new_insegnamento_comune = st.text_input("Insegnamento comune", value=record['Insegnamento comune'] if pd.notna(record['Insegnamento comune']) else "", key=f"insegnamento_comune_{index}")
-        
-        new_codice = st.text_input("Codice insegnamento", value=record['Codice insegnamento'] if pd.notna(record['Codice insegnamento']) else "", key=f"codice_{index}")
-        
-        new_denominazione = st.text_input("Denominazione Insegnamento", value=record['Denominazione Insegnamento'] if pd.notna(record['Denominazione Insegnamento']) else "", key=f"denominazione_{index}")
-        
-        new_docente = st.text_input("Docente", value=record['Docente'] if pd.notna(record['Docente']) else "", key=f"docente_{index}")
-    
-    with col2:
-        new_pef60 = st.selectbox("PeF60 all.1", options=['P', 'D', '---'], index=['P', 'D', '---'].index(record['PeF60 all.1']) if pd.notna(record['PeF60 all.1']) and record['PeF60 all.1'] in ['P', 'D', '---'] else 2, key=f"pef60_{index}")
-        
-        new_pef30_all2 = st.selectbox("PeF30 all.2", options=['P', 'D', '---'], index=['P', 'D', '---'].index(record['PeF30 all.2']) if pd.notna(record['PeF30 all.2']) and record['PeF30 all.2'] in ['P', 'D', '---'] else 2, key=f"pef30_all2_{index}")
-        
-        new_pef36 = st.selectbox("PeF36 all.5", options=['P', 'D', '---'], index=['P', 'D', '---'].index(record['PeF36 all.5']) if pd.notna(record['PeF36 all.5']) and record['PeF36 all.5'] in ['P', 'D', '---'] else 2)
-        
-        new_pef30_art13 = st.selectbox("PeF30 art.13", options=['P', 'D', '---'], index=['P', 'D', '---'].index(record['PeF30 art.13']) if pd.notna(record['PeF30 art.13']) and record['PeF30 art.13'] in ['P', 'D', '---'] else 2, key=f"pef30_art13_{index}")
-        
-        new_aula = st.text_input("Aula", value=record['Aula'] if pd.notna(record['Aula']) else "", key=f"aula_{index}")
-        
-        new_link = st.text_input("Link Teams", value=record['Link Teams'] if pd.notna(record['Link Teams']) else "", key=f"link_teams_{index}")
-        
-        new_cfu = st.text_input("CFU", value=record['CFU'] if pd.notna(record['CFU']) else "", key=f"cfu_{index}")
-        
-        new_note = st.text_area("Note", value=record['Note'] if pd.notna(record['Note']) else "", key=f"note_{index}")
-    
-    # Pulsanti per salvare o annullare
-    col1, col2 = st.columns(2)
-    with col1:
-        save = st.button("Salva modifiche", key=f"save_button_{index}")
-    with col2:
-        cancel = st.button("Annulla", key=f"cancel_button_{index}")
-    
-    if save:
-        # Aggiorna i dati del record
-        try:
-            # Usa la funzione centralizzata per il parsing delle date
-            parsed_date = parse_date(new_data)
-            if parsed_date is None:
-                st.error("Formato data non valido!")
-                return df
-                
-            df.at[index, 'Data'] = parsed_date
-            
-            # Estrai e aggiorna Giorno, Mese, Anno usando la funzione centralizzata
-            giorno, mese, anno = extract_date_components(format_date(parsed_date))
-            df.at[index, 'Giorno'] = giorno
-            df.at[index, 'Mese'] = mese
-            df.at[index, 'Anno'] = anno
-            
-        except Exception as e:
-            st.error(f"Errore nell'elaborazione della data: {e}")
-            return df
-        
-        # Aggiorna gli altri campi
-        df.at[index, 'Orario'] = new_orario
-        df.at[index, 'Dipartimento'] = new_dipartimento
-        df.at[index, 'Classe di concorso'] = new_classe_concorso
-        df.at[index, 'Insegnamento comune'] = new_insegnamento_comune
-        df.at[index, 'PeF60 all.1'] = new_pef60
-        df.at[index, 'PeF30 all.2'] = new_pef30_all2
-        df.at[index, 'PeF36 all.5'] = new_pef36
-        df.at[index, 'PeF30 art.13'] = new_pef30_art13
-        df.at[index, 'Codice insegnamento'] = new_codice
-        df.at[index, 'Denominazione Insegnamento'] = new_denominazione
-        df.at[index, 'Docente'] = new_docente
-        df.at[index, 'Aula'] = new_aula
-        df.at[index, 'Link Teams'] = new_link
-        df.at[index, 'CFU'] = new_cfu
-        df.at[index, 'Note'] = new_note
-        
-        # Salva automaticamente i cambiamenti utilizzando la funzione centralizzata
-        save_data(df)
-        
-        st.success("Record aggiornato e salvato con successo!")
-    
-    if cancel:
-        st.experimental_rerun()
-    
-    return df
-
-def create_new_record(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Crea un nuovo record nel calendario e lo salva automaticamente.
-    
-    Args:
-        df: DataFrame contenente i dati attuali
-        
-    Returns:
-        pd.DataFrame: DataFrame aggiornato con il nuovo record
-    """
-    st.subheader("Aggiungi nuovo record")
-    
-    # Inizializza le variabili per il riutilizzo dei dati
-    continue_iteration = st.session_state.get('continue_iteration', False)
-    last_record = st.session_state.get('last_record', {})
-    
-    # Aggiunta della funzionalità per selezionare un record esistente come base
-    use_existing_record = False
-    selected_record_idx = None
-    
-    # Mostriamo l'opzione solo se ci sono record nel DataFrame
-    if len(df) > 0:
-        col1, col2 = st.columns([1, 3])
-        with col1:
-            use_existing_record = st.checkbox("Usa record esistente", key="use_existing_record")
-        
-        # Se l'utente ha selezionato di usare un record esistente
-        if use_existing_record:
-            # Filtra i record esistenti
-            with col2:
-                search_term = st.text_input("Cerca record (docente, insegnamento, data, etc.)", key="search_existing")
-            
-            if search_term:
-                # Cerca in tutte le colonne di stringhe
-                mask = pd.Series(False, index=df.index)
-                for col in df.columns:
-                    if df[col].dtype == 'object':  # Solo colonne di tipo object (stringhe)
-                        mask = mask | df[col].fillna('').astype(str).str.lower().str.contains(search_term.lower())
-                filtered_df = df[mask]
-            else:
-                filtered_df = df
-            
-            # Mostra i record filtrati per consentirne la selezione
-            if len(filtered_df) > 0:
-                # Prepara i record per la visualizzazione
-                filtered_df['Data_str'] = filtered_df['Data'].apply(format_date)
-                
-                # Mostra le colonne rilevanti per la selezione
-                view_cols = ['Data_str', 'Orario', 'Denominazione Insegnamento', 'Docente']
-                st.dataframe(filtered_df[view_cols], use_container_width=True, height=200)
-                
-                # Crea le opzioni per il selectbox
-                record_options = [f"{i+1}. {format_date(filtered_df.iloc[i]['Data'])} - {filtered_df.iloc[i]['Orario']} - {filtered_df.iloc[i]['Denominazione Insegnamento']} ({filtered_df.iloc[i]['Docente']})" 
-                                for i in range(len(filtered_df))]
-                
-                # Selectbox per selezionare il record
-                selected_record = st.selectbox("Seleziona il record da cui importare i dati:", 
-                                             record_options, 
-                                             key="select_record_base")
-                
-                if selected_record:
-                    # Ottieni l'indice del record selezionato
-                    selected_record_idx = filtered_df.index[record_options.index(selected_record)]
-                    
-                    # Usa i dati dal record selezionato
-                    record_to_use = df.iloc[selected_record_idx].copy()
-                    
-                    # Aggiorna il last_record con i dati del record selezionato
-                    last_record = record_to_use.to_dict()
-                    st.success(f"Importati i dati dal record: {selected_record}")
-                    # Imposta il flag per indicare che stiamo usando un record selezionato
-                    continue_iteration = True
-            else:
-                if search_term:
-                    st.warning("Nessun record trovato con questi criteri di ricerca.")
-                else:
-                    st.info("Inserisci un termine di ricerca per trovare un record da utilizzare.")
-    
-    # Se si sta continuando l'iterazione, prepara i dati dal record precedente
-    if continue_iteration:
-        # Reimposta il flag
-        st.session_state.continue_iteration = False
-        
-        # Recupera i valori dal record precedente
-        default_date = last_record.get('Data', None)
-        default_orario = last_record.get('Orario', '')
-        default_dipartimento = last_record.get('Dipartimento', '')
-        default_classe_concorso = last_record.get('Classe di concorso', '')
-        default_insegnamento_comune = last_record.get('Insegnamento comune', '')
-        default_codice = last_record.get('Codice insegnamento', '')
-        default_denominazione = last_record.get('Denominazione Insegnamento', '')
-        default_docente = last_record.get('Docente', '')
-        default_pef60 = last_record.get('PeF60 all.1', '---')
-        default_pef30_all2 = last_record.get('PeF30 all.2', '---')
-        default_pef36 = last_record.get('PeF36 all.5', '---')
-        default_pef30_art13 = last_record.get('PeF30 art.13', '---')
-        default_aula = last_record.get('Aula', '')
-        default_link = last_record.get('Link Teams', '')
-        default_cfu = last_record.get('CFU', '')
-        default_note = last_record.get('Note', '')
-        
-        st.info("I campi sono stati precompilati con i dati del record selezionato")
-    else:
-        # Valori predefiniti vuoti se non si sta continuando l'iterazione
-        default_date = None
-        default_orario = ''
-        default_dipartimento = ''
-        default_classe_concorso = ''
-        default_insegnamento_comune = ''
-        default_codice = ''
-        default_denominazione = ''
-        default_docente = ''
-        default_pef60 = '---'
-        default_pef30_all2 = '---'
-        default_pef36 = '---'
-        default_pef30_art13 = '---'
-        default_aula = ''
-        default_link = ''
-        default_cfu = ''
-        default_note = ''
-    
-    # Usa una chiave unica per il form
-    form_key = "new_record_form"
-    
-    # Crea un form per raggruppare tutti i campi di input
-    with st.form(key=form_key):
-        # Layout a colonne per i campi del form
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            # Utilizza date_input per selezionare la data con un calendario
-            selected_date = st.date_input(
-                "Data", 
-                value=default_date,
-                format="DD/MM/YYYY",
-                help="Seleziona la data della lezione"
-            )
-            
-            new_orario = st.text_input("Orario (formato: 00:00-00:00)", value=default_orario)
-            
-            new_dipartimento = st.text_input("Dipartimento", value=default_dipartimento)
-            
-            new_classe_concorso = st.text_input("Classe di concorso", value=default_classe_concorso)
-            
-            new_insegnamento_comune = st.text_input("Insegnamento comune", value=default_insegnamento_comune)
-            
-            new_codice = st.text_input("Codice insegnamento", value=default_codice)
-            
-            new_denominazione = st.text_input("Denominazione Insegnamento", value=default_denominazione)
-            
-            new_docente = st.text_input("Docente", value=default_docente)
-        
-        with col2:
-            new_pef60 = st.selectbox("PeF60 all.1", options=['P', 'D', '---'], index=['P', 'D', '---'].index(default_pef60) if default_pef60 in ['P', 'D', '---'] else 2)
-            
-            new_pef30_all2 = st.selectbox("PeF30 all.2", options=['P', 'D', '---'], index=['P', 'D', '---'].index(default_pef30_all2) if default_pef30_all2 in ['P', 'D', '---'] else 2)
-            
-            new_pef36 = st.selectbox("PeF36 all.5", options=['P', 'D', '---'], index=['P', 'D', '---'].index(default_pef36) if default_pef36 in ['P', 'D', '---'] else 2)
-            
-            new_pef30_art13 = st.selectbox("PeF30 art.13", options=['P', 'D', '---'], index=['P', 'D', '---'].index(default_pef30_art13) if default_pef30_art13 in ['P', 'D', '---'] else 2)
-            
-            new_aula = st.text_input("Aula", value=default_aula)
-            
-            new_link = st.text_input("Link Teams", value=default_link)
-            
-            new_cfu = st.text_input("CFU", value=default_cfu)
-            
-            new_note = st.text_area("Note", value=default_note)
-        
-        # Pulsante di submit del form
-        submit_button = st.form_submit_button(label="Salva nuovo record")
-    
-    # Pulsante per annullare (fuori dal form)
-    if st.button("Annulla"):
-        st.experimental_rerun()
-        return df
-    
-    if submit_button:
-        # Mostra un messaggio di caricamento
-        with st.spinner("Salvataggio del nuovo record in corso..."):
-            try:
-                # Verifica se la data è stata selezionata
-                if selected_date is None:
-                    st.error("Seleziona una data valida!")
-                    return df
-                
-                # Verifica se almeno il campo orario è stato compilato
-                if not new_orario or new_orario.strip() == "":
-                    st.error("Il campo Orario è obbligatorio!")
-                    return df
-                    
-                # Imposta la locale per i nomi in italiano
-                setup_locale()
-                    
-                # Converti la data selezionata in un oggetto datetime pandas
-                parsed_date = pd.Timestamp(selected_date)
-                
-                # Estrai i componenti della data
-                giorno = parsed_date.strftime("%A").capitalize()
-                mese = parsed_date.strftime("%B").capitalize()
-                anno = str(parsed_date.year)
-                
-                # Crea il nuovo record con tutti i campi necessari
-                new_record = {
-                    'Data': parsed_date,
-                    'Orario': new_orario,
-                    'Dipartimento': new_dipartimento,
-                    'Classe di concorso': new_classe_concorso,
-                    'Insegnamento comune': new_insegnamento_comune,
-                    'PeF60 all.1': new_pef60,
-                    'PeF30 all.2': new_pef30_all2,
-                    'PeF36 all.5': new_pef36,
-                    'PeF30 art.13': new_pef30_art13,
-                    'Codice insegnamento': new_codice,
-                    'Denominazione Insegnamento': new_denominazione,
-                    'Docente': new_docente,
-                    'Aula': new_aula,
-                    'Link Teams': new_link,
-                    'CFU': new_cfu,
-                    'Note': new_note,
-                    'Giorno': giorno,
-                    'Mese': mese,
-                    'Anno': anno
-                }
-                
-                # Debug: mostra i valori del nuovo record
-                st.info(f"Data: {parsed_date}, Giorno: {giorno}, Mese: {mese}, Anno: {anno}")
-                
-                # Aggiungi il record al dataframe
-                new_df = pd.concat([df, pd.DataFrame([new_record])], ignore_index=True)
-                
-                # Salva automaticamente il dataframe aggiornato
-                save_data(new_df, replace_file=True)
-                
-                st.success("Nuovo record aggiunto e salvato con successo!")
-                
-                # Chiedi all'utente se desidera continuare ad aggiungere record
-                if "continue_adding" not in st.session_state:
-                    st.session_state.continue_adding = True
-                
-                # Salva il record corrente in session_state per un eventuale riutilizzo
-                st.session_state.last_record = new_record.copy()
-                
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    if st.button("Aggiungi un altro record", key="add_another"):
-                        st.session_state.continue_adding = True
-                        # Ricarica la pagina per ripulire il form
-                        st.experimental_rerun()
-                with col2:
-                    if st.button("Continuare l'iterazione?", key="btn_continue_iteration"):
-                        st.session_state.continue_adding = True
-                        st.session_state.continue_iteration = True
-                        # Salva i dati dell'ultimo record per poterli riutilizzare
-                        st.session_state.last_record = new_record.copy()
-                        # Ricarica la pagina mantenendo i dati dell'ultimo record
-                        st.experimental_rerun()
-                with col3:
-                    if st.button("Termina inserimento", key="finish_adding"):
-                        st.session_state.continue_adding = False
-                        
-                # Ritorniamo il dataframe aggiornato
-                return new_df
-                
-            except Exception as e:
-                st.error(f"Errore durante l'aggiunta del record: {e}")
-                import traceback
-                st.error(f"Dettaglio: {traceback.format_exc()}")
-    
-    return df
-
-def create_sample_excel():
-    """
-    Crea un file Excel di esempio con la struttura corretta per l'importazione.
-    
-    Returns:
-        str: Percorso del file Excel creato
-    """
-    # Crea un DataFrame di esempio con le colonne necessarie
-    sample_data = {col: [] for col in FULL_COLUMNS}
-    df = pd.DataFrame(sample_data)
-    
-    # Aggiungi una riga di esempio
-    example_row = {
-        'Data': '2025-04-28', 
-        'Orario': '14:30-16:45',
-        'Dipartimento': 'Area Trasversale - Canale A',
-        'Classe di concorso': 'Area Trasversale - Canale A',
-        'Insegnamento comune': 'Trasversale A',
-        'PeF60 all.1': 'D',
-        'PeF30 all.2': 'D',
-        'PeF36 all.5': 'D',
-        'PeF30 art.13': 'D',
-        'Codice insegnamento': '22911105',
-        'Denominazione Insegnamento': 'Pedagogia generale e interculturale',
-        'Docente': 'Scaramuzzo Gilberto',
-        'Aula': '',
-        'Link Teams': '',
-        'CFU': '0.5',
-        'Note': '',
-        'Giorno': 'Lunedì',
-        'Mese': 'Aprile',
-        'Anno': '2025'
-    }
-    df = pd.concat([df, pd.DataFrame([example_row])], ignore_index=True)
-    
-    # Salva il DataFrame in un file Excel
-    template_path = os.path.join(DATA_FOLDER, 'template_calendario.xlsx')
-    df.to_excel(template_path, index=False)
-    
-    return template_path
-
-def duplicate_record(df: pd.DataFrame, index: int) -> pd.DataFrame:
-    """
-    Duplica un record esistente e permette di modificarlo prima di salvarlo.
-    
-    Args:
-        df: DataFrame contenente i dati
-        index: Indice del record da duplicare
-        
-    Returns:
-        pd.DataFrame: DataFrame aggiornato con il record duplicato
-    """
-    # Chiavi di sessione per questo form
-    session_prefix = f"dup_{index}_"
-    form_id = f"duplicate_form_{index}"
-    
-    # Controlla se è attivo un processo di duplicazione per questo record
-    if f"duplicating_{index}" not in st.session_state:
-        # Prima volta che apriamo il form, inizializza i dati
-        st.session_state[f"duplicating_{index}"] = True
-        
-        # Ottieni il record da duplicare
-        record = df.iloc[index].copy()
-        
-        # Stampiamo i valori del record originale per debug
-        st.write("Valori del record originale:")
-        st.write(f"Denominazione: {record['Denominazione Insegnamento']}")
-        st.write(f"Docente: {record['Docente']}")
-        st.write(f"Dipartimento: {record['Dipartimento']}")
-        st.write(f"Classe di concorso: {record['Classe di concorso']}")
-        st.write(f"CFU: {record['CFU']}")
-        
-        # Imposta i valori predefiniti
-        try:
-            # Per la data, impostiamo la data corrente come default (può essere cambiata dall'utente)
-            st.session_state[f"{session_prefix}date"] = datetime.datetime.now().date()
-            
-            # Per l'orario, lasciamolo vuoto per inserimento manuale
-            st.session_state[f"{session_prefix}orario"] = ""
-            
-            # Copia TUTTI i campi dal record originale senza tentativi di conversione che potrebbero fallire
-            # Campi principali
-            st.session_state[f"{session_prefix}dipartimento"] = record['Dipartimento'] if pd.notna(record['Dipartimento']) else ""
-            st.session_state[f"{session_prefix}classe_concorso"] = record['Classe di concorso'] if pd.notna(record['Classe di concorso']) else ""
-            st.session_state[f"{session_prefix}insegnamento_comune"] = record['Insegnamento comune'] if pd.notna(record['Insegnamento comune']) else ""
-            st.session_state[f"{session_prefix}codice"] = record['Codice insegnamento'] if pd.notna(record['Codice insegnamento']) else ""
-            st.session_state[f"{session_prefix}denominazione"] = record['Denominazione Insegnamento'] if pd.notna(record['Denominazione Insegnamento']) else ""
-            st.session_state[f"{session_prefix}docente"] = record['Docente'] if pd.notna(record['Docente']) else ""
-            
-            # Campi PeF - Manteniamo i valori originali senza forzare il formato
-            st.session_state[f"{session_prefix}pef60"] = record['PeF60 all.1'] if pd.notna(record['PeF60 all.1']) else "---"
-            st.session_state[f"{session_prefix}pef30_all2"] = record['PeF30 all.2'] if pd.notna(record['PeF30 all.2']) else "---"
-            st.session_state[f"{session_prefix}pef36"] = record['PeF36 all.5'] if pd.notna(record['PeF36 all.5']) else "---"
-            st.session_state[f"{session_prefix}pef30_art13"] = record['PeF30 art.13'] if pd.notna(record['PeF30 art.13']) else "---"
-            
-            # Altri campi
-            st.session_state[f"{session_prefix}aula"] = record['Aula'] if pd.notna(record['Aula']) else ""
-            st.session_state[f"{session_prefix}link"] = record['Link Teams'] if pd.notna(record['Link Teams']) else ""
-            st.session_state[f"{session_prefix}cfu"] = record['CFU'] if pd.notna(record['CFU']) else ""
-            st.session_state[f"{session_prefix}note"] = record['Note'] if pd.notna(record['Note']) else ""
-        except Exception as e:
-            st.warning(f"Errore nell'inizializzazione dei campi: {e}")
-    
-    st.subheader(f"Duplica record #{index + 1}")
-    
-    if index < 0 or index >= len(df):
-        st.error(f"Indice non valido: {index}")
-        if f"duplicating_{index}" in st.session_state:
-            del st.session_state[f"duplicating_{index}"]
-        return df
-    
-    # Prepara le opzioni per i menu a tendina
-    pef_options = ['P', 'D', '---']
-    
-    # Aggiungiamo una form per dare struttura e logica all'interfaccia
-    with st.form(key=f"duplicate_form_{form_id}"):
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            # Data con date_input (NON MODIFICARE il valore dopo)
-            selected_date = st.date_input(
-                "Data", 
-                value=st.session_state.get(f"{session_prefix}date", datetime.datetime.now().date()),
-                format="DD/MM/YYYY",
-                help="Seleziona la data della lezione",
-                key=f"{session_prefix}date_input"
-            )
-            
-            # Altri campi del form
-            orario = st.text_input(
-                "Orario (formato: 00:00-00:00)", 
-                value=st.session_state.get(f"{session_prefix}orario", ""),
-                key=f"{session_prefix}orario_input"
-            )
-            
-            dipartimento = st.text_input(
-                "Dipartimento", 
-                value=st.session_state.get(f"{session_prefix}dipartimento", ""),
-                key=f"{session_prefix}dipartimento_input"
-            )
-            
-            classe_concorso = st.text_input(
-                "Classe di concorso", 
-                value=st.session_state.get(f"{session_prefix}classe_concorso", ""),
-                key=f"{session_prefix}classe_concorso_input"
-            )
-            
-            insegnamento_comune = st.text_input(
-                "Insegnamento comune", 
-                value=st.session_state.get(f"{session_prefix}insegnamento_comune", ""),
-                key=f"{session_prefix}insegnamento_comune_input"
-            )
-            
-            codice = st.text_input(
-                "Codice insegnamento", 
-                value=st.session_state.get(f"{session_prefix}codice", ""),
-                key=f"{session_prefix}codice_input"
-            )
-            
-            denominazione = st.text_input(
-                "Denominazione Insegnamento", 
-                value=st.session_state.get(f"{session_prefix}denominazione", ""),
-                key=f"{session_prefix}denominazione_input"
-            )
-            
-            docente = st.text_input(
-                "Docente", 
-                value=st.session_state.get(f"{session_prefix}docente", ""),
-                key=f"{session_prefix}docente_input"
-            )
-        
-        with col2:
-            # Menu a tendina con indici corretti
-            pef60 = st.selectbox(
-                "PeF60 all.1", 
-                options=pef_options, 
-                index=pef_options.index(st.session_state.get(f"{session_prefix}pef60", "---")),
-                key=f"{session_prefix}pef60_select"
-            )
-            
-            pef30_all2 = st.selectbox(
-                "PeF30 all.2", 
-                options=pef_options, 
-                index=pef_options.index(st.session_state.get(f"{session_prefix}pef30_all2", "---")),
-                key=f"{session_prefix}pef30_all2_select"
-            )
-            
-            pef36 = st.selectbox(
-                "PeF36 all.5", 
-                options=pef_options, 
-                index=pef_options.index(st.session_state.get(f"{session_prefix}pef36", "---")),
-                key=f"{session_prefix}pef36_select"
-            )
-            
-            pef30_art13 = st.selectbox(
-                "PeF30 art.13", 
-                options=pef_options, 
-                index=pef_options.index(st.session_state.get(f"{session_prefix}pef30_art13", "---")),
-                key=f"{session_prefix}pef30_art13_select"
-            )
-            
-            aula = st.text_input(
-                "Aula", 
-                value=st.session_state.get(f"{session_prefix}aula", ""),
-                key=f"{session_prefix}aula_input"
-            )
-            
-            link = st.text_input(
-                "Link Teams", 
-                value=st.session_state.get(f"{session_prefix}link", ""),
-                key=f"{session_prefix}link_input"
-            )
-            
-            cfu = st.text_input(
-                "CFU", 
-                value=st.session_state.get(f"{session_prefix}cfu", ""),
-                key=f"{session_prefix}cfu_input"
-            )
-            
-            note = st.text_area(
-                "Note", 
-                value=st.session_state.get(f"{session_prefix}note", ""),
-                key=f"{session_prefix}note_input"
-            )
-        
-        # Pulsante di invio del form
-        submitted = st.form_submit_button("Salva come nuovo record")
-    
-    # Pulsante per annullare (fuori dal form)
-    if st.button("Annulla", key=f"cancel_btn_{form_id}"):
-        # Pulisci lo stato della sessione
-        if f"duplicating_{index}" in st.session_state:
-            del st.session_state[f"duplicating_{index}"]
-            
-        # Pulisci tutti i valori dalla sessione
-        for key in list(st.session_state.keys()):
-            if key.startswith(session_prefix):
-                del st.session_state[key]
-                
-        st.rerun()
-    
-    if submitted:
-        # Crea un nuovo record
-        try:
-            # Converti la data selezionata in datetime
-            if selected_date is None:
-                st.error("Seleziona una data valida!")
-                return df
-                
-            # Imposta la locale per ottenere i nomi italiani
-            setup_locale()
-            
-            # Converti la data selezionata in un oggetto datetime pandas
-            parsed_date = pd.Timestamp(selected_date)
-            
-            # Estrai i componenti della data
-            giorno = parsed_date.strftime("%A").capitalize()
-            mese = parsed_date.strftime("%B").capitalize()
-            anno = str(parsed_date.year)
-            
-            # Crea il nuovo record con tutti i campi necessari
-            new_record = {
-                'Data': parsed_date,
-                'Orario': orario,
-                'Dipartimento': dipartimento,
-                'Classe di concorso': classe_concorso,
-                'Insegnamento comune': insegnamento_comune,
-                'PeF60 all.1': pef60,
-                'PeF30 all.2': pef30_all2,
-                'PeF36 all.5': pef36,
-                'PeF30 art.13': pef30_art13,
-                'Codice insegnamento': codice,
-                'Denominazione Insegnamento': denominazione,
-                'Docente': docente,
-                'Aula': aula,
-                'Link Teams': link,
-                'CFU': cfu,
-                'Note': note,
-                'Giorno': giorno,
-                'Mese': mese,
-                'Anno': anno
-            }
-            
-            # Aggiungi il record al dataframe
-            new_df = pd.concat([df, pd.DataFrame([new_record])], ignore_index=True)
-            
-            # Salva il dataframe aggiornato
-            save_data(new_df, replace_file=True)
-            
-            # Messaggio di successo
-            st.success("Record duplicato e salvato con successo!")
-            
-            # Pulisci lo stato della sessione
-            if f"duplicating_{index}" in st.session_state:
-                del st.session_state[f"duplicating_{index}"]
-                
-            # Pulisci tutti i valori dalla sessione
-            for key in list(st.session_state.keys()):
-                if key.startswith(session_prefix):
-                    del st.session_state[key]
-            
-            # Restituisci subito il nuovo dataframe invece di fare rerun
-            return new_df
-            
-        except Exception as e:
-            st.error(f"Errore durante la duplicazione del record: {e}")
-            import traceback
-            st.error(f"Dettaglio: {traceback.format_exc()}")
-    
-    # Se non è stato premuto il pulsante di salvataggio, restituisci il DataFrame originale
-    return df
 
 def admin_interface(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -1157,19 +1063,87 @@ def admin_interface(df: pd.DataFrame) -> pd.DataFrame:
     # Crea tab per le diverse funzionalità
     admin_tabs = st.tabs(["Visualizza Records", "Aggiungi Record", "Modifica Record", "Elimina Record"])
     
+    # Copia del dataframe originale per i filtri
+    display_df = df.copy()
+    
+    # Aggiungi filtri nella sidebar
+    with st.sidebar:
+        st.markdown("### 🔍 Filtri Records")
+        
+        # Funzionalità di ricerca
+        search_term = st.text_input("Cerca nei record", 
+                                  placeholder="Docente, insegnamento, data...",
+                                  key="admin_search")
+        
+        st.markdown("---")
+        
+        # Filtro per Docente
+        docenti = sorted(df['Docente'].dropna().unique())
+        docente_selected = st.multiselect("Docente:", docenti, key="admin_filter_docente")
+        
+        # Filtro per Insegnamento
+        insegnamenti = sorted(df['Denominazione Insegnamento'].dropna().unique())
+        insegnamento_selected = st.multiselect("Insegnamento:", insegnamenti, key="admin_filter_insegnamento")
+            
+        # Filtro per Classe di concorso
+        classi_concorso = sorted(df['Classe di concorso'].dropna().unique())
+        classe_concorso_selected = st.multiselect("Classe di concorso:", classi_concorso, key="admin_filter_classe")
+        
+        st.markdown("---")
+        
+        # Filtri temporali
+        st.markdown("#### 📅 Filtri temporali")
+        
+        # Filtro per Mese
+        mesi = sorted(df['Mese'].dropna().unique())
+        mese_selected = st.multiselect("Mese:", mesi, key="admin_filter_mese")
+            
+        # Filtro per intervallo di date
+        # Determina le date minime e massime nel dataset
+        min_date = df['Data'].min().date() if not df['Data'].empty else pd.Timestamp.now().date()
+        max_date = df['Data'].max().date() if not df['Data'].empty else pd.Timestamp.now().date()
+        
+        st.markdown("##### Intervallo date")
+        
+        date_start = st.date_input(
+            "Data inizio:",
+            value=min_date,
+            min_value=min_date,
+            max_value=max_date,
+            key="admin_date_start"
+        )
+        
+        date_end = st.date_input(
+            "Data fine:",
+            value=max_date,
+            min_value=min_date,
+            max_value=max_date,
+            key="admin_date_end"
+        )
+        
+        use_date_range = st.checkbox("Filtra per intervallo date", key="admin_use_date_range")
+        
+        st.markdown("---")
+        
+        # Filtro per percorsi formativi
+        st.markdown("#### 🎓 Percorsi formativi")
+        
+        pef_col1, pef_col2 = st.columns(2)
+        
+        with pef_col1:
+            pef60_selected = st.checkbox("PeF60 (60 CFU)", key="admin_filter_pef60")
+            pef36_selected = st.checkbox("PeF36 all.5 (36 CFU)", key="admin_filter_pef36")
+            
+        with pef_col2:
+            pef30_all2_selected = st.checkbox("PeF30 all.2 (30 CFU)", key="admin_filter_pef30_all2")
+            pef30_art13_selected = st.checkbox("PeF30 art.13 (30 CFU)", key="admin_filter_pef30_art13")
+    
     # Tab per visualizzare i record
     with admin_tabs[0]:
         st.subheader("Elenco Records")
         
-        # Funzionalità di ricerca
-        search_col1, search_col2 = st.columns([3, 1])
-        with search_col1:
-            search_term = st.text_input("Cerca nei record (docente, insegnamento, data, etc.)", key="admin_search")
-        with search_col2:
-            search_button = st.button("Cerca")
-        
-        # Filtra i risultati in base alla ricerca
-        display_df = df.copy()
+        # Filtra i risultati in base a tutti i criteri
+        # Prima applica la ricerca testuale
         if search_term:
             # Cerca in tutte le colonne di stringhe
             mask = pd.Series(False, index=display_df.index)
@@ -1177,7 +1151,54 @@ def admin_interface(df: pd.DataFrame) -> pd.DataFrame:
                 if display_df[col].dtype == 'object':  # Solo colonne di tipo object (stringhe)
                     mask = mask | display_df[col].fillna('').astype(str).str.lower().str.contains(search_term.lower())
             display_df = display_df[mask]
-            st.info(f"Trovati {len(display_df)} record corrispondenti alla ricerca.")
+        
+        # Applica i filtri avanzati
+        # Filtro per docente
+        if docente_selected:
+            display_df = display_df[display_df['Docente'].isin(docente_selected)]
+            
+        # Filtro per insegnamento
+        if insegnamento_selected:
+            display_df = display_df[display_df['Denominazione Insegnamento'].isin(insegnamento_selected)]
+            
+        # Filtro per classe di concorso
+        if classe_concorso_selected:
+            display_df = display_df[display_df['Classe di concorso'].isin(classe_concorso_selected)]
+            
+        # Filtro per mese
+        if mese_selected:
+            display_df = display_df[display_df['Mese'].isin(mese_selected)]
+        
+        # Filtro per intervallo date
+        if use_date_range:
+            date_start_ts = pd.Timestamp(date_start)
+            date_end_ts = pd.Timestamp(date_end)
+            display_df = display_df[(display_df['Data'] >= date_start_ts) & (display_df['Data'] <= date_end_ts)]
+            
+        # Filtro per percorsi formativi
+        pef_filters = []
+        
+        if pef60_selected:
+            pef_filters.append((display_df['PeF60 all.1'] == 'P') | (display_df['PeF60 all.1'] == 'D'))
+            
+        if pef30_all2_selected:
+            pef_filters.append((display_df['PeF30 all.2'] == 'P') | (display_df['PeF30 all.2'] == 'D'))
+            
+        if pef36_selected:
+            pef_filters.append((display_df['PeF36 all.5'] == 'P') | (display_df['PeF36 all.5'] == 'D'))
+            
+        if pef30_art13_selected:
+            pef_filters.append((display_df['PeF30 art.13'] == 'P') | (display_df['PeF30 art.13'] == 'D'))
+        
+        # Applica i filtri dei percorsi formativi se almeno uno è selezionato
+        if pef_filters:
+            combined_filter = pd.Series(False, index=display_df.index)
+            for pef_filter in pef_filters:
+                combined_filter = combined_filter | pef_filter
+            display_df = display_df[combined_filter]
+            
+        # Mostra il conteggio dei risultati filtrati
+        st.info(f"Trovati {len(display_df)} record corrispondenti ai filtri.")
         
         # Mostra i record
         if len(display_df) > 0:
@@ -1330,5 +1351,226 @@ def admin_interface(df: pd.DataFrame) -> pd.DataFrame:
                 st.warning("Nessun record trovato con questi criteri di ricerca.")
             else:
                 st.info("Inserisci un termine di ricerca per trovare il record da eliminare.")
+    
+    return df
+
+def create_sample_excel():
+    """
+    Crea un file Excel di esempio con la struttura corretta per l'importazione.
+    
+    Returns:
+        str: Percorso del file Excel creato
+    """
+    # Crea un DataFrame di esempio con le colonne necessarie
+    sample_data = {col: [] for col in FULL_COLUMNS}
+    df = pd.DataFrame(sample_data)
+    
+    # Aggiungi una riga di esempio
+    example_row = {
+        'Data': '2025-04-28', 
+        'Orario': '14:30-16:45',
+        'Dipartimento': 'Area Trasversale - Canale A',
+        'Classe di concorso': 'Area Trasversale - Canale A',
+        'Insegnamento comune': 'Trasversale A',
+        'PeF60 all.1': 'D',
+        'PeF30 all.2': 'D',
+        'PeF36 all.5': 'D',
+        'PeF30 art.13': 'D',
+        'Codice insegnamento': '22911105',
+        'Denominazione Insegnamento': 'Pedagogia generale e interculturale',
+        'Docente': 'Scaramuzzo Gilberto',
+        'Aula': '',
+        'Link Teams': '',
+        'CFU': '0.5',
+        'Note': '',
+        'Giorno': 'Lunedì',
+        'Mese': 'Aprile',
+        'Anno': '2025'
+    }
+    df = pd.concat([df, pd.DataFrame([example_row])], ignore_index=True)
+    
+    # Salva il DataFrame in un file Excel
+    os.makedirs(DATA_FOLDER, exist_ok=True)
+    template_path = os.path.join(DATA_FOLDER, 'template_calendario.xlsx')
+    df.to_excel(template_path, index=False)
+    
+    return template_path
+
+def edit_record(df: pd.DataFrame, index: int) -> pd.DataFrame:
+    """
+    Modifica un record esistente nel DataFrame.
+    
+    Args:
+        df: DataFrame contenente i dati
+        index: Indice del record da modificare
+        
+    Returns:
+        pd.DataFrame: DataFrame aggiornato dopo la modifica
+    """
+    if index < 0 or index >= len(df):
+        st.error(f"Errore: indice record non valido ({index}). Deve essere tra 0 e {len(df)-1}")
+        return df
+    
+    # Ottieni i valori correnti del record
+    record = df.iloc[index]
+    
+    st.subheader("Modifica Record")
+    
+    # Preparazione dei campi da modificare
+    col1, col2 = st.columns(2)
+    
+    # Converti la data in formato datetime comprensibile
+    date_obj = record['Data'] if pd.notna(record['Data']) else None
+    date_str = date_obj.strftime('%Y-%m-%d') if date_obj else ''
+    
+    with col1:
+        new_date = st.date_input("Data", 
+                                value=pd.to_datetime(date_str) if date_str else None,
+                                format="YYYY-MM-DD",
+                                key=f"date_input_{index}")
+        new_orario = st.text_input("Orario (es. 14:30-16:45)", value=record['Orario'], key=f"orario_{index}")
+        new_dipartimento = st.text_input("Dipartimento", value=record['Dipartimento'], key=f"dipartimento_{index}")
+        new_classe = st.text_input("Classe di concorso", value=record['Classe di concorso'], key=f"classe_{index}")
+        new_insegnamento_comune = st.text_input("Insegnamento comune", value=record['Insegnamento comune'], key=f"insegnamento_comune_{index}")
+        new_pef60 = st.text_input("PeF60 all.1", value=record['PeF60 all.1'], key=f"pef60_{index}")
+        new_pef30_all2 = st.text_input("PeF30 all.2", value=record['PeF30 all.2'], key=f"pef30_all2_{index}")
+        new_pef36 = st.text_input("PeF36 all.5", value=record['PeF36 all.5'], key=f"pef36_{index}")
+    
+    with col2:
+        new_pef30_art13 = st.text_input("PeF30 art.13", value=record['PeF30 art.13'], key=f"pef30_art13_{index}")
+        new_codice = st.text_input("Codice insegnamento", value=record['Codice insegnamento'], key=f"codice_{index}")
+        new_denominazione = st.text_input("Denominazione Insegnamento", value=record['Denominazione Insegnamento'], key=f"denominazione_{index}")
+        new_docente = st.text_input("Docente", value=record['Docente'], key=f"docente_{index}")
+        new_aula = st.text_input("Aula", value=record['Aula'], key=f"aula_{index}")
+        new_link = st.text_input("Link Teams", value=record['Link Teams'], key=f"link_{index}")
+        new_cfu = st.text_input("CFU", value=str(record['CFU']) if pd.notna(record['CFU']) else "", key=f"cfu_{index}")
+        new_note = st.text_area("Note", value=record['Note'], key=f"note_{index}")
+    
+    # Pulsante per salvare le modifiche
+    if st.button("Salva modifiche"):
+        # Crea un dizionario con i nuovi valori
+        new_values = {
+            'Data': pd.to_datetime(new_date),
+            'Orario': new_orario,
+            'Dipartimento': new_dipartimento,
+            'Classe di concorso': new_classe,
+            'Insegnamento comune': new_insegnamento_comune,
+            'PeF60 all.1': new_pef60,
+            'PeF30 all.2': new_pef30_all2,
+            'PeF36 all.5': new_pef36,
+            'PeF30 art.13': new_pef30_art13,
+            'Codice insegnamento': normalize_code(new_codice),
+            'Denominazione Insegnamento': new_denominazione,
+            'Docente': new_docente,
+            'Aula': new_aula,
+            'Link Teams': new_link,
+            'CFU': float(new_cfu) if new_cfu.strip() else None,
+            'Note': new_note
+        }
+        
+        # Estrai i componenti dalla data
+        giorno, mese, anno = None, None, None
+        if pd.notna(new_values['Data']):
+            giorno = new_values['Data'].strftime("%A").capitalize()
+            mese = new_values['Data'].strftime("%B").capitalize()
+            anno = str(new_values['Data'].year)
+        
+        # Aggiungi i componenti della data
+        new_values['Giorno'] = giorno
+        new_values['Mese'] = mese
+        new_values['Anno'] = anno
+        
+        # Aggiorna il record nel dataframe
+        for col, val in new_values.items():
+            df.at[index, col] = val
+        
+        # Salva il dataframe aggiornato
+        save_data(df, replace_file=True)
+        
+        st.success("Record aggiornato con successo!")
+    
+    return df
+
+def create_new_record(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Aggiunge un nuovo record al DataFrame.
+    
+    Args:
+        df: DataFrame contenente i dati
+        
+    Returns:
+        pd.DataFrame: DataFrame aggiornato con il nuovo record
+    """
+    st.subheader("Aggiungi Nuovo Record")
+    
+    # Preparazione dei campi da compilare
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        new_date = st.date_input("Data", format="YYYY-MM-DD")
+        new_orario = st.text_input("Orario (es. 14:30-16:45)")
+        new_dipartimento = st.text_input("Dipartimento")
+        new_classe = st.text_input("Classe di concorso")
+        new_insegnamento_comune = st.text_input("Insegnamento comune")
+        new_pef60 = st.text_input("PeF60 all.1")
+        new_pef30_all2 = st.text_input("PeF30 all.2")
+        new_pef36 = st.text_input("PeF36 all.5")
+    
+    with col2:
+        new_pef30_art13 = st.text_input("PeF30 art.13")
+        new_codice = st.text_input("Codice insegnamento")
+        new_denominazione = st.text_input("Denominazione Insegnamento")
+        new_docente = st.text_input("Docente")
+        new_aula = st.text_input("Aula")
+        new_link = st.text_input("Link Teams")
+        new_cfu = st.text_input("CFU")
+        new_note = st.text_area("Note")
+    
+    # Pulsante per salvare il nuovo record
+    if st.button("Salva nuovo record"):
+        # Verifica che i campi obbligatori siano compilati
+        if not new_date or not new_orario or not new_docente or not new_denominazione:
+            st.error("Errore: i campi Data, Orario, Docente e Denominazione Insegnamento sono obbligatori.")
+            return df
+        
+        # Estrai i componenti dalla data
+        try:
+            giorno = new_date.strftime("%A").capitalize()
+            mese = new_date.strftime("%B").capitalize()
+            anno = str(new_date.year)
+        except Exception as e:
+            st.error(f"Errore nella formattazione della data: {e}")
+            return df
+        
+        # Crea un dizionario con i valori del nuovo record
+        new_record = {
+            'Data': pd.to_datetime(new_date),
+            'Orario': new_orario,
+            'Dipartimento': new_dipartimento,
+            'Classe di concorso': new_classe,
+            'Insegnamento comune': new_insegnamento_comune,
+            'PeF60 all.1': new_pef60,
+            'PeF30 all.2': new_pef30_all2,
+            'PeF36 all.5': new_pef36,
+            'PeF30 art.13': new_pef30_art13,
+            'Codice insegnamento': normalize_code(new_codice),
+            'Denominazione Insegnamento': new_denominazione,
+            'Docente': new_docente,
+            'Aula': new_aula,
+            'Link Teams': new_link,
+            'CFU': float(new_cfu) if new_cfu.strip() else None,
+            'Note': new_note,
+            'Giorno': giorno,
+            'Mese': mese,
+            'Anno': anno
+        }
+        
+        # Aggiungi il nuovo record al DataFrame
+        df = pd.concat([df, pd.DataFrame([new_record])], ignore_index=True)
+        
+        # Salva il DataFrame aggiornato
+        save_data(df)
+        
+        st.success("Nuovo record aggiunto con successo!")
     
     return df

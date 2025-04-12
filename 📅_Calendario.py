@@ -13,6 +13,7 @@ from admin_utils import (
 from file_utils import (
     load_data as load_data_central, delete_record, edit_record, create_new_record, format_date, setup_locale
 )
+from teams_utils import apply_teams_links_to_dataframe
 
 def main():
     """Funzione principale che gestisce l'applicazione."""
@@ -93,6 +94,11 @@ def main():
             docenti = sorted(df['Docente'].dropna().unique())
             docente_selected = st.sidebar.multiselect("Seleziona docente:", docenti)
             
+            # Filtro per classe di concorso
+            st.sidebar.subheader("🎯 Classe di Concorso")
+            classi_concorso = sorted(df['Classe di concorso'].dropna().unique())
+            classe_concorso_selected = st.sidebar.multiselect("Seleziona classe di concorso:", classi_concorso)
+            
             # Filtri per percorsi formativi
             st.sidebar.subheader("🎓 Percorsi Formativi")
             pef_cols = ["PeF60 all.1", "PeF30 all.2", "PeF36 all.5", "PeF30 art.13"]
@@ -103,6 +109,51 @@ def main():
                 "PeF30 art.13 (30 CFU)": "PeF30 art.13"
             }
             percorsi_selected = st.sidebar.multiselect("Seleziona percorso:", list(pef_options.keys()))
+            
+            # Selettore delle colonne da visualizzare
+            st.sidebar.subheader("👁️ Visualizzazione Colonne")
+            
+            # Definisci tutte le colonne disponibili con etichette user-friendly
+            available_columns = {
+                'Data': 'Data',
+                'Orario': 'Orario',
+                'Dipartimento': 'Dipartimento',
+                'Classe di concorso': 'Classe di concorso', 
+                'Insegnamento comune': 'Insegnamento comune',
+                'Codice insegnamento': 'Codice insegnamento',
+                'Denominazione Insegnamento': 'Denominazione Insegnamento',
+                'Docente': 'Docente',
+                'Aula': 'Aula',
+                'Link Teams': 'Link Teams', 
+                'CFU': 'CFU',
+                'Note': 'Note'
+            }
+            
+            # Aggiungi anche le colonne dei percorsi formativi
+            for label, col in pef_options.items():
+                available_columns[col] = label
+            
+            # Colonne predefinite (obbligatorie)
+            default_columns = ['Data', 'Orario', 'Denominazione Insegnamento', 'Docente', 'Aula']
+            
+            # Selezione delle colonne da visualizzare
+            if 'selected_columns' not in st.session_state:
+                st.session_state.selected_columns = default_columns
+                
+            columns_to_display = st.sidebar.multiselect(
+                "Seleziona le colonne da visualizzare:",
+                options=list(available_columns.keys()),
+                default=st.session_state.selected_columns,
+                format_func=lambda x: available_columns[x]
+            )
+            
+            # Assicurati che ci siano sempre alcune colonne minime selezionate
+            if not columns_to_display:
+                columns_to_display = default_columns
+                st.sidebar.warning("Seleziona almeno una colonna. Sono state ripristinate le colonne predefinite.")
+            
+            # Aggiorna lo stato della sessione
+            st.session_state.selected_columns = columns_to_display
         
         # Applica i filtri
         filtered_df = df.copy()
@@ -128,6 +179,10 @@ def main():
         # Filtro per docente
         if docente_selected:
             filtered_df = filtered_df[filtered_df['Docente'].isin(docente_selected)]
+            
+        # Filtro per classe di concorso
+        if classe_concorso_selected:
+            filtered_df = filtered_df[filtered_df['Classe di concorso'].isin(classe_concorso_selected)]
         
         # Filtro per percorsi formativi
         if percorsi_selected:
@@ -146,33 +201,38 @@ def main():
             display_df = filtered_df.copy()
             display_df['Data'] = display_df['Data'].apply(format_date)
             
-            # Colonne base che saranno sempre visualizzate
-            base_cols = ['Data', 'Orario', 'Dipartimento', 'Classe di concorso', 'Insegnamento comune', 
-                      'Codice insegnamento', 'Denominazione Insegnamento', 'Docente', 'Aula', 
-                      'Link Teams', 'CFU', 'Note']
+            # Applica i link Teams cliccabili al dataframe
+            display_df = apply_teams_links_to_dataframe(display_df)
             
-            # Colonne dei percorsi formativi
-            pef_cols_map = {
-                "PeF60 (60 CFU)": "PeF60 all.1",
-                "PeF30 all.2 (30 CFU)": "PeF30 all.2", 
-                "PeF36 all.5 (36 CFU)": "PeF36 all.5",
-                "PeF30 art.13 (30 CFU)": "PeF30 art.13"
-            }
+            # Usa le colonne selezionate dall'utente
+            view_cols = st.session_state.selected_columns.copy()
             
-            # Seleziona colonne da visualizzare in base ai percorsi selezionati
-            view_cols = base_cols.copy()
-            
-            # Se nessun percorso è selezionato, mostra tutte le colonne dei percorsi
-            if not percorsi_selected:
-                view_cols = base_cols[:5] + list(pef_cols_map.values()) + base_cols[5:]
-            else:
-                # Aggiungi solo le colonne dei percorsi selezionati
+            # Se sono selezionati percorsi formativi specifici, assicurati che le loro colonne siano incluse
+            if percorsi_selected:
+                # Mappa dei percorsi selezionati alle rispettive colonne
+                pef_cols_map = {
+                    "PeF60 (60 CFU)": "PeF60 all.1",
+                    "PeF30 all.2 (30 CFU)": "PeF30 all.2", 
+                    "PeF36 all.5 (36 CFU)": "PeF36 all.5",
+                    "PeF30 art.13 (30 CFU)": "PeF30 art.13"
+                }
+                
                 percorsi_cols = [pef_cols_map[percorso] for percorso in percorsi_selected]
                 
-                # Inserisci le colonne dei percorsi nella posizione corretta (dopo 'Insegnamento comune')
-                view_cols = base_cols[:5] + percorsi_cols + base_cols[5:]
+                # Aggiungi le colonne dei percorsi selezionati se non sono già incluse
+                for col in percorsi_cols:
+                    if col not in view_cols:
+                        view_cols.append(col)
             
+            # Gestisce la visualizzazione dei link Teams
+            # Purtroppo st.dataframe non supporta HTML direttamente, quindi dobbiamo usare un approccio alternativo
+            
+            # Mostra il dataframe normalmente
             st.dataframe(display_df[view_cols], use_container_width=True, height=400)
+            
+            # Se ci sono link Teams, fornisci istruzioni su come aprirli
+            if 'Link Teams' in view_cols:
+                st.info("ℹ️ I link Teams sono disponibili nella colonna 'Link Teams'. Copia e incolla il link nel tuo browser per aprire la riunione Teams.")
         else:
             st.warning("Nessun risultato trovato con i filtri selezionati.")
     else:
