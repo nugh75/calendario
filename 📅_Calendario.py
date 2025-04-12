@@ -51,6 +51,57 @@ def main():
                                  placeholder="Docente, insegnamento, data...",
                                  key="calendar_search")
             
+            # Selettore delle colonne da visualizzare (subito dopo la ricerca)
+            st.sidebar.subheader("👁️ Visualizzazione Colonne")
+            
+            # Definisci tutte le colonne disponibili con etichette user-friendly
+            available_columns = {
+                'Data': 'Data',
+                'Orario': 'Orario',
+                'Dipartimento': 'Dipartimento',
+                'Classe di concorso': 'Classe di concorso', 
+                'Insegnamento comune': 'Insegnamento comune',
+                'Codice insegnamento': 'Codice insegnamento',
+                'Denominazione Insegnamento': 'Denominazione Insegnamento',
+                'Docente': 'Docente',
+                'Aula': 'Aula',
+                'Link Teams': 'Link Teams', 
+                'CFU': 'CFU',
+                'Note': 'Note'
+            }
+            
+            # Aggiungi anche le colonne dei percorsi formativi
+            pef_options = {
+                "PeF60 (60 CFU)": "PeF60 all.1",
+                "PeF30 all.2 (30 CFU)": "PeF30 all.2",
+                "PeF36 all.5 (36 CFU)": "PeF36 all.5",
+                "PeF30 art.13 (30 CFU)": "PeF30 art.13"
+            }
+            for label, col in pef_options.items():
+                available_columns[col] = label
+            
+            # Colonne predefinite (obbligatorie)
+            default_columns = ['Data', 'Orario', 'Denominazione Insegnamento', 'Docente', 'Aula']
+            
+            # Selezione delle colonne da visualizzare
+            if 'selected_columns' not in st.session_state:
+                st.session_state.selected_columns = default_columns
+                
+            columns_to_display = st.sidebar.multiselect(
+                "Seleziona le colonne da visualizzare:",
+                options=list(available_columns.keys()),
+                default=st.session_state.selected_columns,
+                format_func=lambda x: available_columns[x]
+            )
+            
+            # Assicurati che ci siano sempre alcune colonne minime selezionate
+            if not columns_to_display:
+                columns_to_display = default_columns
+                st.sidebar.warning("Seleziona almeno una colonna. Sono state ripristinate le colonne predefinite.")
+            
+            # Aggiorna lo stato della sessione
+            st.session_state.selected_columns = columns_to_display
+            
             st.sidebar.markdown("---")
             
             # Filtro per periodo (mese e intervallo di date)
@@ -112,43 +163,6 @@ def main():
                 "PeF30 art.13 (30 CFU)": "PeF30 art.13"
             }
             percorsi_selected = st.sidebar.multiselect("Seleziona percorso:", list(pef_options.keys()))
-            
-            # Selettore delle colonne da visualizzare
-            st.sidebar.subheader("👁️ Visualizzazione Colonne")
-            
-            # Definisci tutte le colonne disponibili con etichette user-friendly
-            available_columns = {
-                'Data': 'Data',
-                'Orario': 'Orario',
-                'Dipartimento': 'Dipartimento',
-                'Classe di concorso': 'Classe di concorso', 
-                'Insegnamento comune': 'Insegnamento comune',
-                'Codice insegnamento': 'Codice insegnamento',
-                'Denominazione Insegnamento': 'Denominazione Insegnamento',
-                'Docente': 'Docente',
-                'Aula': 'Aula',
-                'Link Teams': 'Link Teams', 
-                'CFU': 'CFU',
-                'Note': 'Note'
-            }
-            
-            # Aggiungi anche le colonne dei percorsi formativi
-            for label, col in pef_options.items():
-                available_columns[col] = label
-            
-            # Colonne predefinite (obbligatorie)
-            default_columns = ['Data', 'Orario', 'Denominazione Insegnamento', 'Docente', 'Aula']
-            
-            # Selezione delle colonne da visualizzare
-            if 'selected_columns' not in st.session_state:
-                st.session_state.selected_columns = default_columns
-                
-            columns_to_display = st.sidebar.multiselect(
-                "Seleziona le colonne da visualizzare:",
-                options=list(available_columns.keys()),
-                default=st.session_state.selected_columns,
-                format_func=lambda x: available_columns[x]
-            )
             
             # Assicurati che ci siano sempre alcune colonne minime selezionate
             if not columns_to_display:
@@ -214,8 +228,30 @@ def main():
             filtered_df['CFU'] = pd.to_numeric(filtered_df['CFU'], errors='coerce')
             filtered_cfu = filtered_df['CFU'].fillna(0).sum()
         
-        # Mostra il conteggio delle lezioni filtrate e il loro totale CFU
-        st.info(f"📊 Lezioni selezionate: {len(filtered_df)} | 🎓 CFU selezionati: {filtered_cfu:.1f}")
+        # Calcola il tempo totale in ore decimali
+        tempo_totale_decimale = filtered_cfu * 4.5
+        
+        # Converti in formato ore:minuti con arrotondamento ai quarti d'ora
+        tempo_ore = int(tempo_totale_decimale)
+        tempo_minuti_decimale = (tempo_totale_decimale - tempo_ore) * 60
+        
+        # Arrotonda ai quarti d'ora (0, 15, 30, 45)
+        if tempo_minuti_decimale < 7.5:
+            tempo_minuti = 0
+        elif tempo_minuti_decimale < 22.5:
+            tempo_minuti = 15
+        elif tempo_minuti_decimale < 37.5:
+            tempo_minuti = 30
+        elif tempo_minuti_decimale < 52.5:
+            tempo_minuti = 45
+        else:
+            tempo_minuti = 0
+            tempo_ore += 1
+            
+        tempo_sessagesimale = f"{tempo_ore}:{tempo_minuti:02d}"
+        
+        # Mostra il conteggio delle lezioni filtrate, il loro totale CFU e il tempo in formato sessagesimale
+        st.info(f"📊 Lezioni selezionate: {len(filtered_df)} | 🎓 CFU selezionati: {filtered_cfu:.1f} | ⏱️ Ore totali: {tempo_sessagesimale}")
         
         if not filtered_df.empty:
             # Converti le date per la visualizzazione
@@ -261,7 +297,28 @@ def main():
             # Mostra il conteggio totale dei record e CFU in fondo alla pagina
             if 'total_records' in st.session_state:
                 total_cfu = st.session_state.get('total_cfu', 0)
-                st.caption(f"📊 Totale record nel calendario: {st.session_state.total_records} | 🎓 Totale CFU nel calendario: {total_cfu:.1f}")
+                
+                # Calcola il tempo totale in formato sessagesimale anche per il totale generale
+                tot_tempo_decimale = total_cfu * 4.5
+                tot_tempo_ore = int(tot_tempo_decimale)
+                tot_tempo_minuti_decimale = (tot_tempo_decimale - tot_tempo_ore) * 60
+                
+                # Arrotonda ai quarti d'ora (0, 15, 30, 45)
+                if tot_tempo_minuti_decimale < 7.5:
+                    tot_tempo_minuti = 0
+                elif tot_tempo_minuti_decimale < 22.5:
+                    tot_tempo_minuti = 15
+                elif tot_tempo_minuti_decimale < 37.5:
+                    tot_tempo_minuti = 30
+                elif tot_tempo_minuti_decimale < 52.5:
+                    tot_tempo_minuti = 45
+                else:
+                    tot_tempo_minuti = 0
+                    tot_tempo_ore += 1
+                
+                tot_tempo_sessagesimale = f"{tot_tempo_ore}:{tot_tempo_minuti:02d}"
+                
+                st.caption(f"📊 Totale record nel calendario: {st.session_state.total_records} | 🎓 Totale CFU nel calendario: {total_cfu:.1f} | ⏱️ Ore totali: {tot_tempo_sessagesimale}")
         else:
             st.warning("Nessun risultato trovato con i filtri selezionati.")
     else:

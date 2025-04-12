@@ -17,7 +17,7 @@ from file_utils import (
     edit_record, create_new_record
 )
 # Importa la nuova funzione per le statistiche
-from nuova_funzione_statistiche import mostra_statistiche_docenti
+from nuova_funzione_statistiche_ore import mostra_statistiche_docenti
 
 # Configurazione pagina
 st.set_page_config(
@@ -26,8 +26,6 @@ st.set_page_config(
     layout="wide"
 )
 
-# Titolo della pagina con icona
-st.title("📊 Statistiche")
 
 # Verifica se l'utente è loggato come amministratore
 from admin_utils import login_admin, logout_admin
@@ -70,9 +68,11 @@ def load_data():
 # Carica i dati
 df = load_data()
 
-# Aggiungi box informativo per mostrare il numero di record caricati
+# Aggiungiamo il filtro per dipartimento nella sidebar
 if df is not None:
-    st.sidebar.info(f"Record caricati: {len(df)} - [{datetime.now().strftime('%H:%M:%S')}]")
+    st.sidebar.markdown("## Filtri")
+    dipartimenti_list = ["Tutti"] + sorted(df['Dipartimento'].dropna().unique().tolist())
+    selected_dipartimento = st.sidebar.selectbox("Dipartimento:", dipartimenti_list)
 
 # Aggiungi pulsante per ricaricare i dati
 if st.button("🔄 Ricarica dati"):
@@ -84,20 +84,34 @@ if df is not None:
     # Manteniamo solo il tab delle statistiche
     st.header("📊 Statistiche")
     
-    # Richiamiamo direttamente la funzione delle statistiche
-    mostra_statistiche_docenti(df)
+    # Filtriamo il dataframe in base al dipartimento selezionato
+    filtered_df = df.copy()
+    if selected_dipartimento != "Tutti":
+        filtered_df = filtered_df[filtered_df['Dipartimento'] == selected_dipartimento]
+        st.info(f"Dati filtrati per il dipartimento: {selected_dipartimento}")
     
-    if df is None:
-        st.info("Nessuna statistica disponibile sui docenti")
+    # Aggiungiamo la colonna delle ore (1 CFU = 4h30m, 0.5 CFU = 2h15m)
+    # Prima convertiamo i CFU in formato numerico
+    filtered_df['CFU_numeric'] = pd.to_numeric(filtered_df['CFU'].astype(str).str.replace(',', '.'), errors='coerce').fillna(0)
+    
+    # Calcoliamo le ore: CFU * 4.5 ore
+    filtered_df['Ore'] = filtered_df['CFU_numeric'] * 4.5
+    
+    # Arrotondiamo ai quarti d'ora (0.25h = 15min)
+    filtered_df['Ore'] = (filtered_df['Ore'] / 0.25).round() * 0.25
+    
+    # Formattiamo le ore in modo leggibile (es. "4h 30m")
+    def format_ore(ore):
+        ore_intere = int(ore)
+        minuti = int((ore - ore_intere) * 60)
+        return f"{ore_intere}h {minuti:02d}m"
+    
+    filtered_df['Ore_formattate'] = filtered_df['Ore'].apply(format_ore)
+    
+    # Richiamiamo la funzione delle statistiche con i dati filtrati e arricchiti
+    mostra_statistiche_docenti(filtered_df)
 
 else:
     st.error("Errore nel caricamento dei dati. Controlla che il file CSV sia presente e formattato correttamente.")
 
-# Aggiungi solo il pulsante logout nella sidebar
-st.sidebar.markdown("---")
-if is_admin_logged_in():
-    if st.sidebar.button("📤 Logout"):
-        # Esegui il logout usando la funzione centralizzata
-        from admin_utils import logout_admin
-        logout_admin()
-        st.rerun()
+# Manteniamo solo il pulsante logout nella sidebar che è già stato aggiunto sopra
