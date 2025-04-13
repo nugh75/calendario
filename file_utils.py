@@ -1684,15 +1684,17 @@ def admin_interface(df: pd.DataFrame) -> pd.DataFrame:
     with admin_tabs[2]:
         st.subheader("Modifica Record")
         
-        # Crea un filtro per trovare il record da modificare
+        # Usa i filtri della sidebar per prefiltrare i records
+        edit_df = display_df.copy()  # Usa display_df che ha già applicato i filtri della sidebar
+        
+        # Crea un filtro aggiuntivo oltre ai filtri della sidebar
         search_col1, search_col2 = st.columns([3, 1])
         with search_col1:
-            edit_search = st.text_input("Cerca il record da modificare", key="edit_search")
+            edit_search = st.text_input("Filtro aggiuntivo", key="edit_search")
         with search_col2:
             edit_search_btn = st.button("Trova")
         
-        # Filtra i risultati per la modifica
-        edit_df = df.copy()
+        # Applica il filtro di ricerca specifico se inserito
         if edit_search:
             # Cerca in tutte le colonne di stringhe
             mask = pd.Series(False, index=edit_df.index)
@@ -1748,15 +1750,17 @@ def admin_interface(df: pd.DataFrame) -> pd.DataFrame:
     with admin_tabs[3]:
         st.subheader("Elimina Record")
         
-        # Crea un filtro per trovare il record da eliminare
+        # Usa i filtri della sidebar per prefiltrare i records
+        del_df = display_df.copy()  # Usa display_df che ha già applicato i filtri della sidebar
+        
+        # Crea un filtro aggiuntivo oltre ai filtri della sidebar
         del_col1, del_col2 = st.columns([3, 1])
         with del_col1:
-            del_search = st.text_input("Cerca il record da eliminare", key="del_search")
+            del_search = st.text_input("Filtro aggiuntivo", key="del_search")
         with del_col2:
             del_search_btn = st.button("Trova", key="del_search_btn")
         
-        # Filtra i risultati per l'eliminazione
-        del_df = df.copy()
+        # Applica il filtro di ricerca specifico se inserito
         if del_search:
             # Cerca in tutte le colonne di stringhe
             mask = pd.Series(False, index=del_df.index)
