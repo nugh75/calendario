@@ -8,7 +8,7 @@ from datetime import datetime
 import os
 from admin_utils import (
     is_admin_logged_in, upload_excel_file,
-    save_dataframe_to_csv, verify_password
+    save_dataframe_to_db, verify_password
 )
 from file_utils import (
     load_data as load_data_central, format_date, setup_locale
@@ -37,6 +37,11 @@ def main():
     # Caricamento dei dati
     setup_locale()
     df = load_data_central()
+    
+    # Aggiornamento delle statistiche totali
+    if df is not None and not df.empty:
+        st.session_state.total_records = len(df)
+        st.session_state.total_cfu = df['CFU'].sum() if 'CFU' in df.columns else 0
     
     # Layout principale
     st.title("📅 Calendario Lezioni")

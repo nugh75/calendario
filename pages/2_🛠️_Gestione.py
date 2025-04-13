@@ -64,6 +64,20 @@ def show_admin_management():
     with tab1:
         # Utilizza l'interfaccia di amministrazione
         updated_df = admin_interface(df)
+        # Salva i dati aggiornati sia su JSON che SQLite
+        if updated_df is not None and not updated_df.equals(df):
+            # Forza replace_file=True per assicurare la sovrascrittura completa
+            try:
+                # Prima prova a usare la funzione specifica per SQLite se disponibile
+                from db_utils import save_all_records
+                if save_all_records(updated_df):
+                    st.success("✅ Dati salvati con successo nel database SQLite!")
+            except (ImportError, Exception) as e:
+                # Se non disponibile o fallisce, usa save_data che tenterà comunque di salvare in SQLite
+                pass
+            
+            # Salva comunque su JSON per sicurezza
+            save_data(updated_df, replace_file=True)
     
     # Tab per importazione Excel
     with tab2:

@@ -14,9 +14,10 @@ from log_utils import logger
 
 # Importa le utility centralizzate per la gestione dei file
 from file_utils import (
-    load_data, save_data, delete_record, format_date,
-    DEFAULT_CSV_PATH, DATA_FOLDER
+    load_data, save_data, delete_record, DATA_FOLDER
 )
+from date_utils import format_date
+from data_utils import create_new_record, edit_record
 # Importa le funzioni per la gestione di Excel
 from excel_utils import (
     process_excel_upload, create_sample_excel as create_sample_excel_central
@@ -25,6 +26,13 @@ from excel_utils import (
 from data_utils import (
     create_new_record, edit_record
 )
+
+# Importa le funzioni per SQLite
+try:
+    from db_utils import save_record
+except ImportError:
+    logger.error("Impossibile importare le funzioni da db_utils")
+    save_record = None
 
 # Costanti
 # Ottieni la password dall'ambiente invece che hardcoded
@@ -360,6 +368,45 @@ def validate_data(df: pd.DataFrame) -> pd.DataFrame:
     df = df.dropna(subset=['Data'])
     
     return df
+
+def save_dataframe_to_db(df: pd.DataFrame, path: str = None) -> bool:
+    """
+    Salva un DataFrame nel database SQLite.
+    
+    Args:
+        df: DataFrame contenente i dati da salvare
+        path: Parametro ignorato, mantenuto per compatibilità
+        
+    Returns:
+        bool: True se il salvataggio è riuscito, False altrimenti
+    """
+    try:
+        # Log dell'operazione
+        logger.info(f"Salvataggio di {len(df)} record nel database")
+        
+        # Verifica che la funzione save_record sia disponibile
+        if save_record is None:
+            logger.error("Funzione save_record non disponibile. Impossibile salvare i dati nel database.")
+            return False
+        
+        # Salva ogni record nel database
+        success_count = 0
+        for _, row in df.iterrows():
+            # Converti la riga in dizionario
+            record_data = row.to_dict()
+            
+            # Salva nel database
+            if save_record(record_data):
+                success_count += 1
+        
+        logger.info(f"Salvataggio completato: {success_count}/{len(df)} record salvati con successo")
+        return success_count > 0
+    
+    except Exception as e:
+        # Log dell'errore
+        logger.error(f"Errore nel salvataggio del DataFrame: {str(e)}")
+        logger.error(traceback.format_exc())
+        return False
 
 # Nota: le funzioni save_dataframe_to_csv e create_sample_excel sono state rimosse
 # poiché erano solo wrapper per le funzioni centralizzate in altri moduli
