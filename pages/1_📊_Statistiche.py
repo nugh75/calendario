@@ -75,10 +75,12 @@ if df is not None:
     selected_dipartimento = st.sidebar.selectbox("Dipartimento:", dipartimenti_list)
 
 # Aggiungi pulsante per ricaricare i dati
-if st.button("🔄 Ricarica dati"):
-    st.experimental_memo.clear()
-    st.success("🔄 Dati ricaricati!")
-    st.rerun()
+col1, col2 = st.columns([1, 4])
+with col1:
+    if st.button("🔄 Ricarica dati"):
+        st.experimental_memo.clear()
+        st.success("🔄 Dati ricaricati!")
+        st.rerun()
 
 if df is not None:
     # Manteniamo solo il tab delle statistiche

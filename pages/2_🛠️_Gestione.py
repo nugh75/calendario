@@ -4,9 +4,12 @@ Permette di aggiungere, modificare ed eliminare i record.
 """
 
 import streamlit as st
-import pandas as pd
-from file_utils import load_data, admin_interface, create_sample_excel
-from admin_utils import is_admin_logged_in
+import pandas as pd  # Importazione globale di pandas
+import io  # Aggiungiamo io per la gestione dei buffer in memoria
+from file_utils import load_data, save_data
+from admin_utils import is_admin_logged_in, admin_interface
+from excel_utils import create_sample_excel, process_excel_upload
+from teams_utils import load_teams_links  # Aggiungiamo l'import mancante
 
 def show_admin_management():
     """Mostra la pagina di gestione dei record"""
@@ -67,16 +70,54 @@ def show_admin_management():
         st.subheader("Importazione da Excel")
         st.write("Carica un file Excel contenente nuovi record da aggiungere al calendario.")
         
+        # Aggiungiamo qui la sezione per scaricare il modello Excel
+        st.write("---")
+        st.markdown("### Template Excel")
+        st.write("Prima di caricare un file, puoi scaricare un modello di esempio da utilizzare come riferimento.")
+        
+        if st.button("📥 Scarica modello Excel"):
+            try:
+                # Utilizziamo la funzione centralizzata per creare il template Excel
+                import os
+                
+                # Creazione del template Excel utilizzando la funzione esistente
+                template_path = create_sample_excel()
+                
+                # Verifichiamo che il file esista
+                if not os.path.exists(template_path):
+                    st.error("Impossibile generare il template Excel.")
+                else:
+                    # Apriamo il file per la lettura in modalità binaria
+                    with open(template_path, "rb") as file:
+                        # Leggiamo i dati del file
+                        template_data = file.read()
+                        
+                        # Forniamo il file per il download
+                        st.download_button(
+                            label="⬇️ Download Template Excel",
+                            data=template_data,
+                            file_name="template_calendario.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        )
+                    st.success("✅ Template Excel generato correttamente!")
+                
+            except Exception as e:
+                st.error(f"Errore nella generazione del template Excel: {str(e)}")
+        
+        st.write("---")
         uploaded_file = st.file_uploader("Scegli un file Excel", type=["xlsx", "xls"])
         
         if uploaded_file is not None:
             if st.button("Importa Dati"):
-                result = upload_excel_file(uploaded_file)
-                if result:
-                    st.success("Dati importati con successo!")
-                    st.rerun()
-                else:
-                    st.error("Si è verificato un errore durante l'importazione.")
+                with st.spinner("Elaborazione del file Excel in corso..."):
+                    df_result = process_excel_upload(uploaded_file)
+                    if df_result is not None and not df_result.empty:
+                        # Salva i dati elaborati nel file JSON/DB
+                        save_data(df_result)
+                        st.success("Dati importati con successo!")
+                        st.rerun()
+                    else:
+                        st.error("Si è verificato un errore durante l'importazione.")
     
     # Tab per gestione link Teams
     with tab3:
@@ -96,7 +137,8 @@ def show_admin_management():
         if teams_links:
             st.markdown("### Link Teams esistenti")
             
-            # Converte il dizionario in dataframe per una visualizzazione migliore
+            # Assicuriamo che pandas sia disponibile qui
+            import pandas as pd
             links_df = pd.DataFrame(list(teams_links.items()), columns=["Insegnamento comune", "Link Teams"])
             st.dataframe(links_df)
         else:
@@ -104,17 +146,18 @@ def show_admin_management():
         
         # Form per aggiungere/modificare un link Teams
         st.markdown("### Aggiungi o modifica un link Teams")
-        
+        st.write("Qui puoi associare i link Microsoft Teams agli insegnamenti comuni.")
         # Estrai tutti gli insegnamenti comuni dal DataFrame principale
         insegnamenti = sorted(df['Insegnamento comune'].dropna().unique())
-        
+        teams_links = load_teams_links()
         with st.form("add_teams_link_form"):
             # Seleziona un insegnamento esistente o inserisci uno nuovo
             insegnamento_option = st.radio(
                 "Seleziona metodo:",
                 ["Seleziona da elenco", "Inserisci manualmente"]
             )
-            
+            # Pulsante per salvare
+            submit_button = st.form_submit_button("Salva link Teams")
             if insegnamento_option == "Seleziona da elenco":
                 insegnamento = st.selectbox(
                     "Seleziona un insegnamento comune:",
@@ -123,16 +166,8 @@ def show_admin_management():
                 )
             else:
                 insegnamento = st.text_input("Inserisci nome insegnamento comune:")
-            
             # Campo per il link Teams
-            link_teams = st.text_input(
-                "Link Microsoft Teams:",
-                value=teams_links.get(insegnamento, "") if insegnamento else ""
-            )
-            
-            # Pulsante per salvare
-            submit_button = st.form_submit_button("Salva link Teams")
-            
+            link_teams = st.text_input("Link Microsoft Teams:", value=teams_links.get(insegnamento, "") if insegnamento else "")
             if submit_button:
                 if not insegnamento:
                     st.error("Inserisci un nome per l'insegnamento comune.")
@@ -146,13 +181,12 @@ def show_admin_management():
                         st.rerun()  # Ricarica la pagina per mostrare i cambiamenti
                     else:
                         st.error("❌ Si è verificato un errore durante il salvataggio del link.")
-        
+            
         # Form per eliminare un link Teams
         st.markdown("### Elimina un link Teams")
         
         # Ottieni gli insegnamenti che hanno un link Teams
         insegnamenti_con_link = list(teams_links.keys())
-        
         if not insegnamenti_con_link:
             st.info("Non ci sono link Teams da eliminare.")
         else:
@@ -161,10 +195,8 @@ def show_admin_management():
                     "Seleziona un insegnamento comune:",
                     options=insegnamenti_con_link
                 )
-                
-                # Pulsante per eliminare
+                # Pulsante per eliminare un link Teams
                 delete_button = st.form_submit_button("❌ Elimina link Teams")
-                
                 if delete_button:
                     # Elimina il link
                     success = delete_teams_link(insegnamento_da_eliminare)
@@ -173,25 +205,10 @@ def show_admin_management():
                         st.rerun()  # Ricarica la pagina per mostrare i cambiamenti
                     else:
                         st.error("❌ Si è verificato un errore durante l'eliminazione del link.")
-        
-        # Download template Excel
-        st.write("---")
-        st.subheader("Template Excel")
-        st.write("Scarica un file Excel di esempio da utilizzare come template.")
-        
-        if st.button("Scarica Template Excel"):
-            template_path = create_sample_excel()
-            with open(template_path, "rb") as file:
-                st.download_button(
-                    label="📥 Download Template",
-                    data=file,
-                    file_name="template_calendario.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
     
     # Pulsante per tornare alla dashboard
     if st.button("↩️ Torna alla Dashboard"):
         st.switch_page("📅_Calendario.py")
 
-if __name__ == "__main__":
+if __name__ == "__main__":        
     show_admin_management()

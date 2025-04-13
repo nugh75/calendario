@@ -37,15 +37,40 @@ CSV_HEADERS = [
     "(DPCM 4 agosto 2023);;;;;;;;;;;;;;;\n"
 ]
 
-def setup_locale() -> None:
-    """Imposta la localizzazione italiana per le date."""
-    try:
-        locale.setlocale(locale.LC_TIME, 'it_IT.UTF-8')
-    except:
+def setup_locale() -> bool:
+    """
+    Imposta la localizzazione italiana per le date.
+    
+    Returns:
+        bool: True se la localizzazione è stata impostata correttamente, False altrimenti
+    """
+    # Lista di possibili localizzazioni italiane in ordine di preferenza
+    italian_locales = ['it_IT.UTF-8', 'it_IT.utf8', 'it_IT', 'it', 'Italian_Italy']
+    
+    # Salva la localizzazione corrente per poterla ripristinare in caso di errore
+    current_locale = locale.getlocale(locale.LC_TIME)
+    
+    for loc in italian_locales:
         try:
-            locale.setlocale(locale.LC_TIME, 'it_IT')
+            locale.setlocale(locale.LC_TIME, loc)
+            return True
+        except locale.Error:
+            continue
+    
+    try:
+        # Fallback: usa la localizzazione di default del sistema
+        locale.setlocale(locale.LC_TIME, '')
+        # Log dell'avviso
+        from log_utils import logger
+        logger.warning("Impossibile impostare la localizzazione italiana. Usata localizzazione di default.")
+        return False
+    except:
+        # Ripristina la localizzazione originale se tutte le altre opzioni falliscono
+        try:
+            locale.setlocale(locale.LC_TIME, current_locale)
         except:
-            pass  # Fallback alla locale di default
+            pass
+        return False
 
 def format_date(date_obj_or_str) -> Optional[str]:
     """
@@ -59,26 +84,63 @@ def format_date(date_obj_or_str) -> Optional[str]:
     """
     if pd.isna(date_obj_or_str):
         return None
-        
+    
+    # Definizione dei nomi dei mesi italiani per la traduzione manuale se necessario
+    italian_months = {
+        1: "gennaio", 2: "febbraio", 3: "marzo", 4: "aprile", 5: "maggio", 
+        6: "giugno", 7: "luglio", 8: "agosto", 9: "settembre", 
+        10: "ottobre", 11: "novembre", 12: "dicembre"
+    }
+    
+    # Definizione dei nomi dei giorni italiani per la traduzione manuale
+    italian_days = {
+        0: "lunedì", 1: "martedì", 2: "mercoledì", 3: "giovedì",
+        4: "venerdì", 5: "sabato", 6: "domenica"
+    }
+    
     try:
-        # Se è un oggetto datetime, formattalo direttamente
+        # 1. Se è un oggetto datetime, procedi direttamente con la formattazione
         if isinstance(date_obj_or_str, (pd.Timestamp, datetime.datetime)):
-            return date_obj_or_str.strftime("%A %d %B %Y").lower()
-            
-        # Se è una stringa, cerca di convertirla a datetime
-        date = pd.to_datetime(date_obj_or_str, errors='coerce')
-        if pd.notna(date):
-            return date.strftime("%A %d %B %Y").lower()
+            date_obj = date_obj_or_str
+        else:
+            # 2. Se è una stringa, tenta di convertirla in datetime
+            try:
+                date_obj = pd.to_datetime(date_obj_or_str, errors='raise')
+            except:
+                # 3. Se la stringa è già in formato italiano, restituiscila normalizzata
+                if isinstance(date_obj_or_str, str):
+                    date_str_lower = date_obj_or_str.lower()
+                    if any(month in date_str_lower for month in italian_months.values()):
+                        return date_str_lower
+                return None
         
-        # Se la stringa è già nel formato italiano, lasciala così
-        if isinstance(date_obj_or_str, str) and any(month in date_obj_or_str.lower() for month in 
-                                                 ["gennaio", "febbraio", "marzo", "aprile", "maggio", 
-                                                  "giugno", "luglio", "agosto", "settembre", 
-                                                  "ottobre", "novembre", "dicembre"]):
-            return date_obj_or_str.lower()
+        # Tenta la formattazione standard con localizzazione italiana
+        try:
+            # Verifica che la localizzazione italiana sia attiva
+            locale_test = datetime.datetime(2025, 1, 1).strftime("%B")
+            if locale_test.lower() in ["january", "jan", "gennaio", "gen"]:
+                # Localizzazione funzionante, usa strftime
+                return date_obj.strftime("%A %d %B %Y").lower()
+            else:
+                # Fallback: formattazione manuale
+                raise Exception("Localizzazione non disponibile")
+        except:
+            # Fallback con traduzione manuale
+            day_name = italian_days.get(date_obj.weekday(), "")
+            month_name = italian_months.get(date_obj.month, "")
+            if day_name and month_name:
+                return f"{day_name} {date_obj.day:02d} {month_name} {date_obj.year}"
+            else:
+                # Ultimo fallback: formato internazionale
+                return date_obj.strftime("%d/%m/%Y")
             
     except Exception as e:
-        st.warning(f"Errore nella formattazione data: {e}")
+        # Log dell'errore
+        try:
+            from log_utils import logger
+            logger.error(f"Errore nella formattazione data: {e}")
+        except:
+            st.warning(f"Errore nella formattazione data: {e}")
     
     return None
 
@@ -150,7 +212,8 @@ def parse_date(date_str):
 
 def load_data() -> pd.DataFrame:
     """
-    Funzione centralizzata per caricare i dati del calendario da file JSON.
+    Funzione centralizzata per caricare i dati del calendario.
+    Prima tenta di caricare da SQLite, se fallisce torna al metodo JSON.
     
     Returns:
         pd.DataFrame: Dataframe contenente i dati del calendario, o un DataFrame vuoto in caso di errore
@@ -164,11 +227,41 @@ def load_data() -> pd.DataFrame:
         try:
             from log_utils import logger
             log_available = True
-            logger.debug("Inizio caricamento dati da JSON...")
+            logger.debug("Inizio caricamento dati...")
         except ImportError:
             log_available = False
             if print_debug:
                 print("Logger non disponibile")
+        
+        # Prima tenta di caricare i dati dal database SQLite
+        try:
+            from db_utils import load_data as load_data_db
+            
+            if log_available:
+                logger.info("Tentativo di caricamento dati da SQLite...")
+            
+            db_df = load_data_db()
+            
+            # Se ha funzionato e ci sono dati, restituisci il DataFrame
+            if db_df is not None and len(db_df) > 0:
+                if log_available:
+                    logger.info(f"Dati caricati con successo da SQLite: {len(db_df)} record")
+                return db_df
+            
+            # Se non ci sono dati nel DB, torna al metodo JSON
+            if log_available:
+                logger.info("Nessun dato trovato nel database SQLite, utilizzo il metodo JSON")
+        except ImportError:
+            # Se db_utils non è disponibile, log e continua con JSON
+            if log_available:
+                logger.info("Modulo db_utils non disponibile, utilizzo il metodo JSON")
+        except Exception as db_error:
+            # In caso di errore con SQLite, log e continua con JSON
+            if log_available:
+                logger.warning(f"Errore nel caricamento dati da SQLite: {db_error}, utilizzo il metodo JSON")
+                
+        if log_available:
+            logger.debug("Inizio caricamento dati da JSON...")
         
         # Inizializza un DataFrame vuoto con le colonne corrette
         empty_df = pd.DataFrame(columns=FULL_COLUMNS)
@@ -469,7 +562,7 @@ def migrate_csv_to_json() -> pd.DataFrame:
 
 def save_data(df: pd.DataFrame, replace_file: bool = False) -> str:
     """
-    Salva un dataframe nel file JSON standard del calendario.
+    Salva un dataframe sia nel database SQLite che nel file JSON standard del calendario.
     
     Args:
         df: DataFrame da salvare
@@ -488,14 +581,55 @@ def save_data(df: pd.DataFrame, replace_file: bool = False) -> str:
     except ImportError:
         pass  # Se il logger non è disponibile, continua senza errori
     
-    # Definizione di un container di debug fittizio che usa solo il logger
-    class LoggerDebugContainer:
-        def text(self, message): 
-            try:
-                from log_utils import logger
-                logger.debug(message)
-            except ImportError:
-                pass
+    # Importa il container di debug fittizio che usa solo il logger
+    from fixed_logger_debug_container import LoggerDebugContainer
+                
+    # Prima, tenta di salvare i dati nel database SQLite
+    sqlite_success = False
+    try:
+        from db_utils import save_record
+        
+        # Log del tentativo
+        try:
+            from log_utils import logger
+            logger.info("Tentativo di salvare i dati in SQLite...")
+        except ImportError:
+            pass
+            
+        # Salva ogni record nel database
+        success_count = 0
+        for _, row in df.iterrows():
+            if save_record(row.to_dict()):
+                success_count += 1
+                
+        sqlite_success = success_count > 0
+        
+        # Log del risultato
+        try:
+            from log_utils import logger
+            if sqlite_success:
+                logger.info(f"Salvati con successo {success_count}/{len(df)} record nel database SQLite")
+            else:
+                logger.warning(f"Nessun record salvato con successo nel database SQLite")
+        except ImportError:
+            pass
+            
+    except ImportError:
+        # Se il modulo db_utils non è disponibile, continua solo con il JSON
+        try:
+            from log_utils import logger
+            logger.warning("Modulo db_utils non disponibile, utilizzo solo JSON")
+        except ImportError:
+            pass
+    except Exception as e:
+        # In caso di errore nel salvataggio SQLite, log e continua con JSON
+        try:
+            from log_utils import logger
+            logger.error(f"Errore nel salvataggio dei dati in SQLite: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
+        except ImportError:
+            pass
         def info(self, message): 
             try:
                 from log_utils import logger
@@ -533,6 +667,12 @@ def save_data(df: pd.DataFrame, replace_file: bool = False) -> str:
             logger.debug(f"DF info - shape: {df.shape}, columns: {list(df.columns)}")
             # Log dei primi record per debug
             logger.debug(f"Prime 3 righe del dataframe:\n{df.head(3)}")
+            
+            # Log del risultato del salvataggio SQLite
+            if sqlite_success:
+                logger.debug("Il salvataggio in SQLite è stato completato con successo, procedendo con il salvataggio JSON per retrocompatibilità")
+            else:
+                logger.debug("Il salvataggio in SQLite non è riuscito o non è disponibile, utilizzo il metodo JSON")
         except:
             pass
         
@@ -714,11 +854,11 @@ def save_data(df: pd.DataFrame, replace_file: bool = False) -> str:
             # Ora che abbiamo le date in formato datetime, aggiorna Giorno, Mese e Anno
             debug_container.text("Fase 9.2: Aggiornamento campi data derivati...")
             
-            # Genera Giorno, Mese e Anno direttamente dagli oggetti datetime
-            # Questo metodo è più affidabile rispetto all'uso di una funzione lambda
-            df['Giorno'] = df['Data'].dt.strftime('%A').str.capitalize()
-            df['Mese'] = df['Data'].dt.strftime('%B').str.capitalize()
-            df['Anno'] = df['Data'].dt.year.astype(str)
+            # Genera Giorno, Mese e Anno con gestione sicura dei valori nulli
+            # Utilizziamo apply() per maggiore sicurezza con valori NaT
+            df['Giorno'] = df['Data'].apply(lambda x: x.strftime('%A').capitalize() if pd.notnull(x) else "")
+            df['Mese'] = df['Data'].apply(lambda x: x.strftime('%B').capitalize() if pd.notnull(x) else "")
+            df['Anno'] = df['Data'].apply(lambda x: str(x.year) if pd.notnull(x) else "")
             
             debug_container.success(f"✅ Aggiornati {len(df)} record con Giorno, Mese e Anno")
             
@@ -850,7 +990,7 @@ def save_data(df: pd.DataFrame, replace_file: bool = False) -> str:
 
 def delete_record(df: pd.DataFrame, index: int) -> pd.DataFrame:
     """
-    Elimina un record dal DataFrame e aggiorna il file.
+    Elimina un record dal DataFrame, dal database SQLite e aggiorna il file JSON.
     
     Args:
         df: DataFrame contenente i dati
@@ -863,10 +1003,50 @@ def delete_record(df: pd.DataFrame, index: int) -> pd.DataFrame:
         st.error(f"Errore: indice record non valido ({index}). Deve essere tra 0 e {len(df)-1}")
         return df
         
-    # Elimina il record
+    # Prima tenta di eliminare il record dal database SQLite
+    sqlite_success = False
+    try:
+        from db_utils import delete_record as delete_sql_record
+        
+        # Ottieni i dati del record da eliminare
+        record_data = df.iloc[index].to_dict()
+        
+        # Tenta l'eliminazione dal database
+        if delete_sql_record(record_data):
+            sqlite_success = True
+            try:
+                from log_utils import logger
+                logger.info(f"Record eliminato con successo dal database SQLite")
+            except ImportError:
+                pass
+        else:
+            try:
+                from log_utils import logger
+                logger.warning(f"Impossibile eliminare il record dal database SQLite")
+            except ImportError:
+                pass
+    except ImportError:
+        # Se il modulo db_utils non è disponibile, continua solo con il JSON
+        try:
+            from log_utils import logger
+            logger.warning("Modulo db_utils non disponibile, eliminazione solo dal JSON")
+        except ImportError:
+            pass
+    except Exception as e:
+        # In caso di errore nell'eliminazione da SQLite, log e continua con JSON
+        try:
+            from log_utils import logger
+            logger.error(f"Errore nell'eliminazione del record da SQLite: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
+        except ImportError:
+            pass
+    
+    # Elimina il record dal DataFrame
     df = df.drop(df.index[index]).reset_index(drop=True)
     
     # Salva il DataFrame aggiornato con sovrascrittura completa del file
+    # (la funzione save_data si occuperà anche del salvataggio in SQLite)
     save_data(df, replace_file=True)
     
     # Conferma
@@ -889,6 +1069,17 @@ def process_excel_upload(uploaded_file, debug_container=None) -> pd.DataFrame:
     if uploaded_file is None:
         st.warning("Nessun file selezionato per l'importazione.")
         return None
+    
+    # Inizializza la barra di progresso
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    # Funzione di aggiornamento della barra di progresso
+    def update_progress(step, total_steps, message=""):
+        progress = int(step / total_steps * 100)
+        progress_bar.progress(progress)
+        if message:
+            status_text.text(f"Fase {step}/{total_steps}: {message}")
     
     # Crea un debug_container fittizio se non fornito
     if debug_container is None:
@@ -929,12 +1120,26 @@ def process_excel_upload(uploaded_file, debug_container=None) -> pd.DataFrame:
             def __exit__(self, exc_type, exc_val, exc_tb): pass
         
         debug_container = DummyContainer()
-        
+    
+    # Definisci il numero totale di passaggi per il tracking del progresso
+    total_steps = 8  # Aggiornato a 8 per includere la validazione SQLite
+    current_step = 0
+    
     try:
+        # Passo 1: Preparazione e localizzazione
+        current_step += 1
+        update_progress(current_step, total_steps, "Preparazione e impostazione localizzazione")
         debug_container.text("Avvio processo di importazione Excel...")
-        setup_locale()
+        # Imposta localizzazione italiana e verifica se è stato impostato correttamente
+        locale_set = setup_locale()
+        if not locale_set:
+            debug_container.warning("Impossibile impostare la localizzazione italiana. I nomi di giorni e mesi potrebbero non essere in italiano.")
         
-        # Definisci i tipi di dati attesi per le colonne, forzando stringa per quelle problematiche
+        # Passo 2: Tentativo di lettura del file Excel
+        current_step += 1
+        update_progress(current_step, total_steps, "Lettura del file Excel")
+        
+        # Definisci i tipi di dati attesi per le colonne problematiche
         expected_dtypes = {
             'Aula': str,
             'Link Teams': str,
@@ -942,32 +1147,69 @@ def process_excel_upload(uploaded_file, debug_container=None) -> pd.DataFrame:
             'CFU': str,  # Leggi come stringa per gestire virgole/punti
             'Codice insegnamento': str # Leggi come stringa per preservare formati
         }
-        # Assicurati che tutte le colonne base siano definite, altrimenti usa 'object'
+        # Assicurati che tutte le colonne base siano definite
         for col in BASE_COLUMNS:
             if col not in expected_dtypes:
                 expected_dtypes[col] = object # Default a object (stringa) se non specificato
 
+        # Prima, tentiamo di leggere senza saltare righe per verificare la struttura del file
         try:
-            # Leggi il file Excel specificando i tipi di dati
-            df = pd.read_excel(uploaded_file, skiprows=3, dtype=expected_dtypes)
+            # Leggi prima il file senza saltare righe per ispezionarlo
+            preview_df = pd.read_excel(uploaded_file, nrows=10)
+            
+            # Determina automaticamente se ci sono righe di intestazione da saltare
+            skip_rows = 0
+            headers_detected = False
+            
+            # Esamina le prime righe per trovare intestazioni standard
+            header_keywords = ["calendario", "lezioni", "percorsi", "formazione", "docenti"]
+            for i in range(min(5, len(preview_df))):  # Controlla solo le prime 5 righe
+                row_text = ' '.join([str(val).lower() for val in preview_df.iloc[i].values if pd.notna(val)])
+                if any(keyword in row_text for keyword in header_keywords):
+                    skip_rows = i + 1  # Salta questa riga e tutte quelle precedenti
+                    headers_detected = True
+            
+            # Se non sono state rilevate intestazioni standard, mantieni il comportamento predefinito (3 righe)
+            if not headers_detected:
+                skip_rows = 3  # Comportamento predefinito
+                debug_container.info(f"Nessuna intestazione standard rilevata. Utilizzo comportamento predefinito: {skip_rows} righe saltate.")
+            else:
+                debug_container.success(f"Rilevate intestazioni standard. Saltate {skip_rows} righe.")
+            
+            # Ora leggi il file con il numero corretto di righe da saltare
+            df = pd.read_excel(uploaded_file, skiprows=skip_rows, dtype=expected_dtypes)
             
             # Verifica iniziale della struttura del file
             if len(df) == 0:
+                progress_bar.empty()
+                status_text.empty()
                 st.error("⚠️ Importazione fallita: Il file Excel caricato è vuoto.")
                 return None
                 
             if len(df.columns) < 4:  # Minimo di colonne essenziali (Data, Orario, Docente, Denominazione)
+                progress_bar.empty()
+                status_text.empty()
                 st.error("⚠️ Importazione fallita: Il file Excel non ha la struttura corretta. Mancano colonne essenziali.")
                 st.info("Scarica il template per vedere la struttura corretta.")
                 return None
                 
         except Exception as excel_err:
+            progress_bar.empty()
+            status_text.empty()
             st.error(f"⚠️ Importazione fallita: Errore nella lettura del file Excel. {excel_err}")
             st.info("Assicurati che il file sia nel formato Excel (.xlsx o .xls) e che non sia danneggiato.")
             return None
 
+        # Passo 3: Gestione delle colonne
+        current_step += 1
+        update_progress(current_step, total_steps, "Preparazione delle colonne")
+        
         # Gestisci solo le colonne essenziali (senza Giorno, Mese, Anno)
         essential_columns = BASE_COLUMNS  # Colonne essenziali escludendo Giorno, Mese, Anno
+        
+        # Mostra informazioni sulle colonne rilevate
+        debug_container.info(f"Colonne rilevate nel file: {len(df.columns)}")
+        debug_container.info(f"Nomi delle colonne: {df.columns.tolist()}")
         
         # Se ci sono meno colonne del previsto
         if len(df.columns) <= len(essential_columns):
@@ -976,18 +1218,26 @@ def process_excel_upload(uploaded_file, debug_container=None) -> pd.DataFrame:
             # Aggiungi colonne essenziali mancanti
             for col in essential_columns[len(df.columns):]:
                 df[col] = None
+                debug_container.warning(f"Aggiunta colonna mancante: {col}")
         else:
             # Se ci sono più colonne del previsto, prendi solo le colonne essenziali
             df = df.iloc[:, :len(essential_columns)]
             df.columns = essential_columns
+            debug_container.warning(f"Rimosse colonne in eccesso. Mantenute solo le prime {len(essential_columns)} colonne.")
+        
+        # Passo 4: Pulizia dei dati
+        current_step += 1
+        update_progress(current_step, total_steps, "Pulizia dei dati")
         
         # Pulizia IMMEDIATA dei dati dopo la lettura
-        # Sostituisci tutti i NaN con stringhe vuote
-        df = df.fillna('')
+        # Sostituisci tutti i NaN con stringhe vuote nelle colonne di tipo object
+        for col in df.select_dtypes(include=['object']).columns:
+            df[col] = df[col].fillna('')
+        
         # Rimuovi le stringhe 'nan', 'None', etc.
         for col in df.columns:
             if df[col].dtype == 'object':
-                 df[col] = df[col].replace(['nan', 'None', 'NaN', 'none', '<NA>', 'null'], '', regex=False)
+                df[col] = df[col].replace(['nan', 'None', 'NaN', 'none', '<NA>', 'null'], '', regex=False)
         
         # Filtra le righe con Orario mancante
         initial_rows = len(df)
@@ -995,9 +1245,16 @@ def process_excel_upload(uploaded_file, debug_container=None) -> pd.DataFrame:
         rows_after_orario = len(df)
         
         if rows_after_orario < initial_rows:
-            debug_container.warning(f"Rimosse {initial_rows - rows_after_orario} righe senza orario")
-            
-        # Converti le date in formato datetime
+            removed_rows = initial_rows - rows_after_orario
+            debug_container.warning(f"Rimosse {removed_rows} righe senza orario")
+            if removed_rows > 0:
+                status_text.text(f"Rimosse {removed_rows} righe senza orario")
+        
+        # Passo 5: Gestione delle date
+        current_step += 1
+        update_progress(current_step, total_steps, "Conversione e validazione delle date")
+        
+        # Converti le date in formato datetime con gestione robusta
         df['Data'] = pd.to_datetime(df['Data'], errors='coerce')
         
         # Rimuovi le righe con date non valide
@@ -1007,51 +1264,179 @@ def process_excel_upload(uploaded_file, debug_container=None) -> pd.DataFrame:
         
         # Mostra avviso se sono state rimosse righe per date non valide
         if rows_after_date_filter < rows_before_date_filter:
-            debug_container.warning(f"Rimosse {rows_before_date_filter - rows_after_date_filter} righe con date non valide")
+            removed_date_rows = rows_before_date_filter - rows_after_date_filter
+            debug_container.warning(f"Rimosse {removed_date_rows} righe con date non valide")
+            status_text.text(f"Rimosse {removed_date_rows} righe con date non valide")
+            
             if rows_after_date_filter == 0:
+                progress_bar.empty()
+                status_text.empty()
                 st.error("⚠️ Importazione fallita: Tutte le date nel file sono non valide o in un formato non riconosciuto.")
                 st.info("Controlla che le date siano nel formato YYYY-MM-DD o altro formato standard.")
                 return None
         
-        # Genera automaticamente i campi Giorno, Mese e Anno dalla colonna Data
-        df['Giorno'] = df['Data'].dt.strftime('%A').str.capitalize()
-        df['Mese'] = df['Data'].dt.strftime('%B').str.capitalize()
+        # Passo 6: Generazione campi derivati dalle date
+        current_step += 1
+        update_progress(current_step, total_steps, "Generazione campi Giorno, Mese e Anno")
+        
+        # Metodo migliorato per generare i campi Giorno e Mese in italiano
+        # Utilizza la funzione format_date migliorata che abbiamo implementato
+        # che include fallback per la localizzazione
+        italian_days = {
+            0: "lunedì", 1: "martedì", 2: "mercoledì", 3: "giovedì",
+            4: "venerdì", 5: "sabato", 6: "domenica"
+        }
+        
+        italian_months = {
+            1: "gennaio", 2: "febbraio", 3: "marzo", 4: "aprile", 5: "maggio", 
+            6: "giugno", 7: "luglio", 8: "agosto", 9: "settembre", 
+            10: "ottobre", 11: "novembre", 12: "dicembre"
+        }
+        
+        # Generiamo i giorni e mesi usando il mapping diretto invece di fare affidamento sulla localizzazione
+        df['Giorno'] = df['Data'].apply(lambda x: italian_days.get(x.weekday(), "").capitalize())
+        df['Mese'] = df['Data'].apply(lambda x: italian_months.get(x.month, "").capitalize())
         df['Anno'] = df['Data'].dt.year.astype(str)
         
-        # Gestisci CFU (converti a float dopo aver pulito)
+        # Controlla se ci sono problemi con i campi generati
+        if df['Giorno'].isna().any() or df['Mese'].isna().any():
+            debug_container.warning("Attenzione: Alcuni nomi di Giorno o Mese potrebbero non essere stati generati correttamente")
+            status_text.text("Attenzione: Alcuni campi relativi alle date potrebbero non essere completi")
+        
+        # Passo 7: Elaborazione finale e validazione
+        current_step += 1
+        update_progress(current_step, total_steps, "Validazione finale e normalizzazione dei dati")
+        
+        # Gestisci CFU (converti a float dopo aver pulito) con gestione più robusta
         if 'CFU' in df.columns:
+            # Prima converti in stringa e sostituisci le virgole con punti
             df['CFU'] = df['CFU'].astype(str).str.replace(',', '.')
-            df['CFU'] = pd.to_numeric(df['CFU'], errors='coerce').fillna(0.0) # Convert to float, fill NaN with 0.0
+            # Pulisci i valori strani prima della conversione
+            df['CFU'] = df['CFU'].replace(['', 'nan', 'None', 'NaN', 'none', '<NA>', 'null'], '0')
+            # Ora converti in numerico, con gestione errori
+            df['CFU'] = pd.to_numeric(df['CFU'], errors='coerce').fillna(0.0)
+            
+            # Log dei valori CFU
+            debug_container.info(f"Valori CFU elaborati. Range: {df['CFU'].min()} - {df['CFU'].max()}")
 
-        # Gestisci Codice insegnamento (rimuovi .0 se presente)
+        # Gestisci Codice insegnamento (rimuovi .0 se presente) con gestione più robusta
         if 'Codice insegnamento' in df.columns:
-             df['Codice insegnamento'] = df['Codice insegnamento'].astype(str).apply(lambda x: x.split('.')[0] if '.' in x else x)
+            # Converti in stringa e gestisci valori nulli
+            df['Codice insegnamento'] = df['Codice insegnamento'].fillna('').astype(str)
+            # Rimuovi .0 alla fine dei codici numerici
+            df['Codice insegnamento'] = df['Codice insegnamento'].apply(
+                lambda x: x.split('.')[0] if '.' in x and x.split('.')[1] == '0' else x
+            )
+            # Rimuovi spazi extra all'inizio e alla fine
+            df['Codice insegnamento'] = df['Codice insegnamento'].str.strip()
 
-        # Verifica campi essenziali
-        missing_fields_rows = 0
+        # Verifica campi essenziali con feedback più dettagliato
+        missing_fields_rows = []
         for idx, row in df.iterrows():
-            if (pd.isna(row['Docente']) or row['Docente'] == '') or (pd.isna(row['Denominazione Insegnamento']) or row['Denominazione Insegnamento'] == ''):
-                missing_fields_rows += 1
+            missing_fields = []
+            
+            if pd.isna(row['Docente']) or row['Docente'] == '':
+                missing_fields.append('Docente')
                 
-        if missing_fields_rows > 0:
-            debug_container.warning(f"Trovate {missing_fields_rows} righe con dati incompleti (manca docente o denominazione insegnamento)")
+            if pd.isna(row['Denominazione Insegnamento']) or row['Denominazione Insegnamento'] == '':
+                missing_fields.append('Denominazione Insegnamento')
+                
+            if missing_fields:
+                missing_fields_rows.append((idx, row['Data'], missing_fields))
+        
+        if missing_fields_rows:
+            debug_container.warning(f"Trovate {len(missing_fields_rows)} righe con dati incompleti")
+            status_text.text(f"Trovate {len(missing_fields_rows)} righe con dati essenziali mancanti")
+            
+            # Fornisci dettagli sui record problematici
+            with st.expander("Dettagli record con dati incompleti"):
+                for idx, data, campi in missing_fields_rows:
+                    st.write(f"Riga {idx+1} ({data.strftime('%d/%m/%Y')}): Mancano {', '.join(campi)}")
 
+        # Aggiungiamo un nuovo passo di validazione per SQLite
+        current_step += 1
+        update_progress(current_step, total_steps, "Validazione compatibilità con database SQLite")
+        
+        # Verifica compatibilità con SQLite
+        sqlite_validation_ok = True
+        sqlite_validation_message = ""
+        try:
+            # Tenta di importare db_utils per verificare lo schema del database
+            from db_utils import validate_record_schema, get_db_schema
+            
+            # Campiona alcuni record per la validazione (max 5)
+            sample_size = min(5, len(df))
+            if sample_size > 0:
+                sample_records = df.head(sample_size).to_dict('records')
+                
+                # Valida ogni record del campione
+                validation_results = []
+                for idx, record in enumerate(sample_records):
+                    is_valid, message = validate_record_schema(record)
+                    if not is_valid:
+                        validation_results.append(f"Record {idx+1}: {message}")
+                
+                if validation_results:
+                    sqlite_validation_ok = False
+                    sqlite_validation_message = "\n".join(validation_results)
+                    debug_container.warning(f"Problemi di compatibilità con SQLite: {len(validation_results)} errori trovati")
+                else:
+                    debug_container.success("Validazione SQLite: Tutti i record del campione sono compatibili con il database")
+            
+            # Log dello schema del database
+            try:
+                db_schema = get_db_schema()
+                debug_container.info(f"Schema del database SQLite: {db_schema}")
+            except Exception as schema_err:
+                debug_container.warning(f"Impossibile recuperare lo schema del database: {str(schema_err)}")
+                
+        except ImportError:
+            debug_container.info("Modulo db_utils non disponibile, saltata la validazione SQLite")
+        except Exception as e:
+            debug_container.warning(f"Errore durante la validazione SQLite: {str(e)}")
+            debug_container.warning(traceback.format_exc())
+        
+        # Se ci sono problemi di compatibilità SQLite, mostra un avviso ma continua
+        if not sqlite_validation_ok:
+            with st.expander("⚠️ Avviso di compatibilità con il database"):
+                st.warning("I dati importati potrebbero non essere completamente compatibili con il database SQLite.")
+                st.write("Dettaglio problemi:")
+                st.code(sqlite_validation_message)
+                st.info("L'importazione può continuare, ma alcuni record potrebbero non essere salvati correttamente nel database.")
+        
+        # Completa la barra di progresso e mostra il risultato finale
+        progress_bar.progress(100)
+        
         # Log dei risultati
         record_count = len(df)
         if record_count > 0:
+            status_text.text(f"✅ Importazione completata: {record_count} record validi importati.")
             st.success(f"✅ File Excel elaborato con successo: {record_count} record validi importati.")
         else:
+            progress_bar.empty()
+            status_text.empty()
             st.error("⚠️ Importazione fallita: Nessun record valido trovato nel file.")
             return None
             
         try:
             from log_utils import logger
             logger.info(f"File Excel processato: {len(df)} record validi. Tipi dopo process_excel_upload: {df.dtypes.to_dict()}")
+            if not sqlite_validation_ok:
+                logger.warning(f"Potenziali problemi di compatibilità con SQLite: {sqlite_validation_message}")
         except ImportError:
             pass
         
+        # Resetta la barra di progresso dopo un breve ritardo
+        time.sleep(1)
+        progress_bar.empty()
+        status_text.empty()
+        
         return df
     except Exception as e:
+        # Pulizia dell'interfaccia in caso di errore
+        progress_bar.empty()
+        status_text.empty()
+        
         error_message = f"Errore durante l'elaborazione del file: {e}"
         st.error(f"⚠️ Importazione fallita: {error_message}")
         st.info("Dettagli tecnici dell'errore sono stati registrati nei log.")
@@ -1432,42 +1817,332 @@ def admin_interface(df: pd.DataFrame) -> pd.DataFrame:
 def create_sample_excel():
     """
     Crea un file Excel di esempio con la struttura corretta per l'importazione.
+    Il modello è allineato con la struttura del database SQLite.
     
     Returns:
         str: Percorso del file Excel creato
     """
+    import os
+    import pandas as pd
+    from datetime import datetime
+    
+    # Usiamo le costanti definite a livello di modulo per le colonne
+    # BASE_COLUMNS e FULL_COLUMNS
+    
     # Crea un DataFrame di esempio con le colonne necessarie
     sample_data = {col: [] for col in FULL_COLUMNS}
     df = pd.DataFrame(sample_data)
     
-    # Aggiungi una riga di esempio
-    example_row = {
-        'Data': '2025-04-28', 
-        'Orario': '14:30-16:45',
-        'Dipartimento': 'Area Trasversale - Canale A',
-        'Classe di concorso': 'Area Trasversale - Canale A',
-        'Insegnamento comune': 'Trasversale A',
-        'PeF60 all.1': 'D',
-        'PeF30 all.2': 'D',
-        'PeF36 all.5': 'D',
-        'PeF30 art.13': 'D',
-        'Codice insegnamento': '22911105',
-        'Denominazione Insegnamento': 'Pedagogia generale e interculturale',
-        'Docente': 'Scaramuzzo Gilberto',
-        'Aula': '',
-        'Link Teams': '',
-        'CFU': '0.5',
-        'Note': '',
-        'Giorno': 'Lunedì',
-        'Mese': 'Aprile',
-        'Anno': '2025'
-    }
-    df = pd.concat([df, pd.DataFrame([example_row])], ignore_index=True)
+    # Aggiungi due righe di esempio
+    example_rows = [
+        {
+            'Data': '2025-04-28', 
+            'Orario': '14:30-16:45',
+            'Dipartimento': 'Area Trasversale - Canale A',
+            'Classe di concorso': 'Area Trasversale - Canale A',
+            'Insegnamento comune': 'Trasversale A',
+            'PeF60 all.1': 'D',
+            'PeF30 all.2': 'D',
+            'PeF36 all.5': 'D',
+            'PeF30 art.13': 'D',
+            'Codice insegnamento': '22911105',
+            'Denominazione Insegnamento': 'Pedagogia generale e interculturale',
+            'Docente': 'Scaramuzzo Gilberto',
+            'Aula': '',
+            'Link Teams': '',
+            'CFU': 0.5,  # Come numero decimale, non come stringa
+            'Note': '',
+            'Giorno': 'Lunedì',
+            'Mese': 'Aprile',
+            'Anno': '2025'
+        },
+        {
+            'Data': '2025-04-29', 
+            'Orario': '16:45-19:00',
+            'Dipartimento': 'Scienze della Formazione',
+            'Classe di concorso': 'A018',
+            'Insegnamento comune': 'A018',
+            'PeF60 all.1': 'P',
+            'PeF30 all.2': 'P',
+            'PeF36 all.5': 'P',
+            'PeF30 art.13': 'D',
+            'Codice insegnamento': '22910050',
+            'Denominazione Insegnamento': 'Didattica della psicologia',
+            'Docente': 'Vecchio Giovanni Maria',
+            'Aula': 'aula 15 Via Principe Amedeo, 182/b',
+            'Link Teams': 'A018',
+            'CFU': 0.5,  # Come numero decimale, non come stringa
+            'Note': 'Esempio di nota',
+            'Giorno': 'Martedì',
+            'Mese': 'Aprile',
+            'Anno': '2025'
+        }
+    ]
+    
+    df = pd.concat([df, pd.DataFrame(example_rows)], ignore_index=True)
     
     # Salva il DataFrame in un file Excel
     os.makedirs(DATA_FOLDER, exist_ok=True)
     template_path = os.path.join(DATA_FOLDER, 'template_calendario.xlsx')
-    df.to_excel(template_path, index=False)
+    
+    try:
+        # Utilizzo di xlsxwriter per creare un Excel con formattazione
+        writer = pd.ExcelWriter(template_path, engine='xlsxwriter')
+        df.to_excel(writer, index=False, sheet_name='Calendario')
+        
+        # Ottieni il foglio di lavoro per applicare formattazione
+        workbook = writer.book
+        worksheet = writer.sheets['Calendario']
+        
+        # Formato per le intestazioni
+        header_format = workbook.add_format({
+            'bold': True,
+            'bg_color': '#E6E6E6',
+            'align': 'center',
+            'valign': 'vcenter',
+            'border': 1
+        })
+        
+        # Applica formattazione alle intestazioni
+        for col_num, column in enumerate(df.columns):
+            worksheet.write(0, col_num, column, header_format)
+            # Imposta la larghezza delle colonne
+            worksheet.set_column(col_num, col_num, max(len(column) * 1.2, 12))
+        
+        # Aggiungi informazioni sul modello
+        worksheet.write(len(df) + 2, 0, "Informazioni sul modello:")
+        worksheet.write(len(df) + 3, 0, "• Le colonne con sfondo grigio sono obbligatorie")
+        worksheet.write(len(df) + 4, 0, "• Il campo CFU deve essere un numero (es. 0.5)")
+        worksheet.write(len(df) + 5, 0, "• I campi Giorno, Mese e Anno possono essere vuoti, verranno generati dalla Data")
+        worksheet.write(len(df) + 6, 0, "• La Data deve essere nel formato YYYY-MM-DD (es. 2025-04-28)")
+        worksheet.write(len(df) + 7, 0, "• L'Orario deve essere nel formato HH:MM-HH:MM (es. 14:30-16:45)")
+        
+        # Chiudi il writer per salvare il file
+        writer.close()
+    except ImportError:
+        # Se xlsxwriter non è disponibile, usa il metodo standard
+        df.to_excel(template_path, index=False)
+    
+    # Registra la creazione nel log, se disponibile
+    try:
+        from log_utils import logger
+        logger.info(f"Creato modello Excel in: {template_path}")
+    except ImportError:
+        pass
+    
+    import os
+    import pandas as pd
+    from datetime import datetime
+    
+    # Usiamo le costanti definite a livello di modulo per le colonne
+    # BASE_COLUMNS e FULL_COLUMNS
+    
+    # Crea un DataFrame di esempio con le colonne necessarie
+    sample_data = {col: [] for col in FULL_COLUMNS}
+    df = pd.DataFrame(sample_data)
+    
+    # Aggiungi due righe di esempio
+    example_rows = [
+        {
+            'Data': '2025-04-28', 
+            'Orario': '14:30-16:45',
+            'Dipartimento': 'Area Trasversale - Canale A',
+            'Classe di concorso': 'Area Trasversale - Canale A',
+            'Insegnamento comune': 'Trasversale A',
+            'PeF60 all.1': 'D',
+            'PeF30 all.2': 'D',
+            'PeF36 all.5': 'D',
+            'PeF30 art.13': 'D',
+            'Codice insegnamento': '22911105',
+            'Denominazione Insegnamento': 'Pedagogia generale e interculturale',
+            'Docente': 'Scaramuzzo Gilberto',
+            'Aula': '',
+            'Link Teams': '',
+            'CFU': 0.5,  # Come numero decimale, non come stringa
+            'Note': '',
+            'Giorno': 'Lunedì',
+            'Mese': 'Aprile',
+            'Anno': '2025'
+        },
+        {
+            'Data': '2025-04-29', 
+            'Orario': '16:45-19:00',
+            'Dipartimento': 'Scienze della Formazione',
+            'Classe di concorso': 'A018',
+            'Insegnamento comune': 'A018',
+            'PeF60 all.1': 'P',
+            'PeF30 all.2': 'P',
+            'PeF36 all.5': 'P',
+            'PeF30 art.13': 'D',
+            'Codice insegnamento': '22910050',
+            'Denominazione Insegnamento': 'Didattica della psicologia',
+            'Docente': 'Vecchio Giovanni Maria',
+            'Aula': 'aula 15 Via Principe Amedeo, 182/b',
+            'Link Teams': 'A018',
+            'CFU': 0.5,  # Come numero decimale, non come stringa
+            'Note': 'Esempio di nota',
+            'Giorno': 'Martedì',
+            'Mese': 'Aprile',
+            'Anno': '2025'
+        }
+    ]
+    
+    df = pd.concat([df, pd.DataFrame(example_rows)], ignore_index=True)
+    
+    # Salva il DataFrame in un file Excel
+    os.makedirs(DATA_FOLDER, exist_ok=True)
+    template_path = os.path.join(DATA_FOLDER, 'template_calendario.xlsx')
+    
+    try:
+        # Utilizzo di xlsxwriter per creare un Excel con formattazione
+        writer = pd.ExcelWriter(template_path, engine='xlsxwriter')
+        df.to_excel(writer, index=False, sheet_name='Calendario')
+        
+        # Ottieni il foglio di lavoro per applicare formattazione
+        workbook = writer.book
+        worksheet = writer.sheets['Calendario']
+        
+        # Formato per le intestazioni
+        header_format = workbook.add_format({
+            'bold': True,
+            'bg_color': '#E6E6E6',
+            'align': 'center',
+            'valign': 'vcenter',
+            'border': 1
+        })
+        
+        # Applica formattazione alle intestazioni
+        for col_num, column in enumerate(df.columns):
+            worksheet.write(0, col_num, column, header_format)
+            # Imposta la larghezza delle colonne
+            worksheet.set_column(col_num, col_num, max(len(column) * 1.2, 12))
+        
+        # Aggiungi informazioni sul modello
+        worksheet.write(len(df) + 2, 0, "Informazioni sul modello:")
+        worksheet.write(len(df) + 3, 0, "• Le colonne con sfondo grigio sono obbligatorie")
+        worksheet.write(len(df) + 4, 0, "• Il campo CFU deve essere un numero (es. 0.5)")
+        worksheet.write(len(df) + 5, 0, "• I campi Giorno, Mese e Anno possono essere vuoti, verranno generati dalla Data")
+        worksheet.write(len(df) + 6, 0, "• La Data deve essere nel formato YYYY-MM-DD (es. 2025-04-28)")
+        worksheet.write(len(df) + 7, 0, "• L'Orario deve essere nel formato HH:MM-HH:MM (es. 14:30-16:45)")
+        
+        # Chiudi il writer per salvare il file
+        writer.close()
+    except ImportError:
+        # Se xlsxwriter non è disponibile, usa il metodo standard
+        df.to_excel(template_path, index=False)
+    
+    # Registra la creazione nel log, se disponibile
+    try:
+        from log_utils import logger
+        logger.info(f"Creato modello Excel in: {template_path}")
+    except ImportError:
+        pass
+    
+    return template_path
+    # NB: Manteniamo i nomi delle colonne user-friendly, la conversione avviene durante l'importazione
+    db_compatible_columns = [
+        'Data', 'Orario', 'Dipartimento', 'Classe di concorso',
+        'Insegnamento comune', 'PeF60 all.1', 'PeF30 all.2', 'PeF36 all.5', 'PeF30 art.13',
+        'Codice insegnamento', 'Denominazione Insegnamento', 'Docente',
+        'Aula', 'Link Teams', 'CFU', 'Note'
+    ]
+    
+    # Aggiungi le colonne che vengono generate automaticamente dalla Data (non obbligatorie)
+    full_columns = db_compatible_columns + ['Giorno', 'Mese', 'Anno']
+    
+    # Crea un DataFrame di esempio con le colonne necessarie
+    sample_data = {col: [] for col in full_columns}
+    df = pd.DataFrame(sample_data)
+    
+    # Aggiungi due righe di esempio
+    example_rows = [
+        {
+            'Data': '2025-04-28', 
+            'Orario': '14:30-16:45',
+            'Dipartimento': 'Area Trasversale - Canale A',
+            'Classe di concorso': 'Area Trasversale - Canale A',
+            'Insegnamento comune': 'Trasversale A',
+            'PeF60 all.1': 'D',
+            'PeF30 all.2': 'D',
+            'PeF36 all.5': 'D',
+            'PeF30 art.13': 'D',
+            'Codice insegnamento': '22911105',
+            'Denominazione Insegnamento': 'Pedagogia generale e interculturale',
+            'Docente': 'Scaramuzzo Gilberto',
+            'Aula': '',
+            'Link Teams': '',
+            'CFU': 0.5,  # Ora come numero, non come stringa
+            'Note': '',
+            'Giorno': 'Lunedì',
+            'Mese': 'Aprile',
+            'Anno': '2025'
+        },
+        {
+            'Data': '2025-04-29', 
+            'Orario': '16:45-19:00',
+            'Dipartimento': 'Scienze della Formazione',
+            'Classe di concorso': 'A018',
+            'Insegnamento comune': 'A018',
+            'PeF60 all.1': 'P',
+            'PeF30 all.2': 'P',
+            'PeF36 all.5': 'P',
+            'PeF30 art.13': 'D',
+            'Codice insegnamento': '22910050',
+            'Denominazione Insegnamento': 'Didattica della psicologia',
+            'Docente': 'Vecchio Giovanni Maria',
+            'Aula': 'aula 15 Via Principe Amedeo, 182/b',
+            'Link Teams': 'A018',
+            'CFU': 0.5,  # Ora come numero, non come stringa
+            'Note': 'Esempio di nota',
+            'Giorno': 'Martedì',
+            'Mese': 'Aprile',
+            'Anno': '2025'
+        }
+    ]
+    
+    df = pd.concat([df, pd.DataFrame(example_rows)], ignore_index=True)
+    
+    # Salva il DataFrame in un file Excel
+    os.makedirs(DATA_FOLDER, exist_ok=True)
+    template_path = os.path.join(DATA_FOLDER, 'template_calendario.xlsx')
+    
+    # Crea un writer Excel con formattazione
+    with pd.ExcelWriter(template_path, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='Calendario')
+        
+        # Ottieni il foglio di lavoro per applicare formattazione
+        worksheet = writer.sheets['Calendario']
+        
+        # Applica formattazione alle intestazioni
+        for col in range(1, len(full_columns) + 1):
+            cell = worksheet.cell(row=1, column=col)
+            cell.font = openpyxl.styles.Font(bold=True)
+            cell.fill = openpyxl.styles.PatternFill(start_color='E6E6E6', end_color='E6E6E6', fill_type='solid')
+        
+        # Imposta la larghezza delle colonne
+        for idx, col in enumerate(full_columns):
+            worksheet.column_dimensions[openpyxl.utils.get_column_letter(idx+1)].width = 18
+    
+    # Aggiungi un commento al file Excel per spiegare compatibilità
+    try:
+        wb = openpyxl.load_workbook(template_path)
+        sheet = wb.active
+        # Aggiungi commento alla cella A1 con istruzioni per la compatibilità
+        sheet['A1'].comment = openpyxl.comments.Comment(
+            "Questo modello è ottimizzato per l'importazione nel database. "
+            "Le colonne Giorno, Mese e Anno possono essere lasciate vuote, verranno generate automaticamente. "
+            "Il campo CFU deve contenere numeri (es. 0.5).", "Sistema"
+        )
+        wb.save(template_path)
+    except Exception:
+        # Se la formattazione aggiuntiva fallisce, il file è comunque valido
+        pass
+    
+    try:
+        from log_utils import logger
+        logger.info(f"Creato modello Excel in: {template_path}")
+    except ImportError:
+        pass
     
     return template_path
 
@@ -1559,10 +2234,48 @@ def edit_record(df: pd.DataFrame, index: int) -> pd.DataFrame:
         for col, val in new_values.items():
             df.at[index, col] = val
         
-        # Salva il dataframe aggiornato
+        # Tentativo diretto di aggiornamento nel database SQLite
+        sqlite_success = False
+        try:
+            from db_utils import update_record
+            
+            # Prepara i dati per l'aggiornamento
+            updated_record = df.iloc[index].to_dict()
+            
+            # Tenta l'aggiornamento diretto nel database SQLite
+            if update_record(updated_record):
+                sqlite_success = True
+                try:
+                    from log_utils import logger
+                    logger.info("Record aggiornato con successo nel database SQLite")
+                except ImportError:
+                    pass
+        except ImportError:
+            # Il modulo db_utils non è disponibile
+            try:
+                from log_utils import logger
+                logger.warning("Modulo db_utils non disponibile, utilizzo solo JSON")
+            except ImportError:
+                pass
+        except Exception as e:
+            # Errore nell'aggiornamento SQLite
+            try:
+                from log_utils import logger
+                logger.error(f"Errore nell'aggiornamento del record in SQLite: {str(e)}")
+                import traceback
+                logger.error(traceback.format_exc())
+            except ImportError:
+                pass
+                
+        # Indipendentemente dal risultato SQLite, aggiorna anche il file JSON
+        # Nota: save_data() si occuperà comunque di tentare un salvataggio anche in SQLite
         save_data(df, replace_file=True)
         
-        st.success("Record aggiornato con successo!")
+        success_msg = "Record aggiornato con successo!"
+        if sqlite_success:
+            success_msg += " (Salvato in SQLite e JSON)"
+            
+        st.success(success_msg)
     
     return df
 
@@ -1640,12 +2353,46 @@ def create_new_record(df: pd.DataFrame) -> pd.DataFrame:
             'Anno': anno
         }
         
-        # Aggiungi il nuovo record al DataFrame
+        # Tentativo diretto di inserimento nel database SQLite
+        sqlite_success = False
+        try:
+            from db_utils import save_record
+            
+            # Tenta l'inserimento diretto nel database SQLite
+            if save_record(new_record):
+                sqlite_success = True
+                try:
+                    from log_utils import logger
+                    logger.info("Nuovo record inserito con successo nel database SQLite")
+                except ImportError:
+                    pass
+        except ImportError:
+            # Il modulo db_utils non è disponibile
+            try:
+                from log_utils import logger
+                logger.warning("Modulo db_utils non disponibile, utilizzo solo JSON")
+            except ImportError:
+                pass
+        except Exception as e:
+            # Errore nell'inserimento SQLite
+            try:
+                from log_utils import logger
+                logger.error(f"Errore nell'inserimento del nuovo record in SQLite: {str(e)}")
+                import traceback
+                logger.error(traceback.format_exc())
+            except ImportError:
+                pass
+        
+        # Aggiungi il nuovo record al DataFrame in memoria
         df = pd.concat([df, pd.DataFrame([new_record])], ignore_index=True)
         
-        # Salva il DataFrame aggiornato
+        # Salva il DataFrame aggiornato nel file JSON per retrocompatibilità
         save_data(df)
         
-        st.success("Nuovo record aggiunto con successo!")
+        success_msg = "Nuovo record aggiunto con successo!"
+        if sqlite_success:
+            success_msg += " (Salvato in SQLite e JSON)"
+            
+        st.success(success_msg)
     
     return df
