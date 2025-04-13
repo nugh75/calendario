@@ -1,7 +1,7 @@
 import pandas as pd
 import streamlit as st
 import os
-from admin_utils import save_dataframe_to_csv
+from file_utils import save_data
 
 def mostra_statistiche_docenti(df):
     """
