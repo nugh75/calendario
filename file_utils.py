@@ -1253,6 +1253,26 @@ def admin_interface(df: pd.DataFrame) -> pd.DataFrame:
             
             st.dataframe(del_view, use_container_width=True, height=300)
             
+            # Pulsante per eliminazione multipla (posizionato subito dopo la tabella)
+            st.info(f"Trovati {len(del_df)} record corrispondenti ai filtri attuali.")
+            
+            # Aggiungiamo checkbox per conferma eliminazione multipla
+            col_multi1, col_multi2 = st.columns([3, 1])
+            with col_multi1:
+                multi_delete_confirm = st.checkbox("Confermo di voler eliminare tutti i record filtrati", key="multi_delete_confirm")
+            with col_multi2:
+                if multi_delete_confirm:
+                    if st.button("❌ Elimina tutti i record filtrati", key="delete_all_filtered"):
+                        # Importa la funzione di eliminazione multipla
+                        from db_delete_operations import delete_filtered_records
+                        # Elimina tutti i record filtrati
+                        df = delete_filtered_records(df, del_df)
+                        # Ricarica l'interfaccia
+                        st.rerun()
+            
+            st.markdown("---")
+            st.subheader("Eliminazione singolo record")
+            
             # Selezione del record da eliminare
             del_record_indices = del_df.index.tolist()
             del_record_options = [f"{i+1}. {format_date(del_df.iloc[i]['Data'])} - {del_df.iloc[i]['Orario']} - {del_df.iloc[i]['Denominazione Insegnamento']} ({del_df.iloc[i]['Docente']})" 
