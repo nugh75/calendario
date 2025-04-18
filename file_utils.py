@@ -1194,9 +1194,17 @@ def admin_interface(df: pd.DataFrame) -> pd.DataFrame:
                 # Ottieni l'indice del record selezionato
                 selected_idx = record_indices[record_options.index(selected_record)]
                 
+                # Inizializza la variabile di stato se non esiste
+                if 'edit_idx' not in st.session_state:
+                    st.session_state.edit_idx = None
+                
                 # Pulsante per confermare la modifica
-                if st.button("Modifica questo record"):
-                    df = edit_record(df, selected_idx)
+                if st.button("✏️ Modifica questo record", key=f'edit_btn_{selected_idx}'):
+                    st.session_state.edit_idx = selected_idx
+                
+                # Mostra sempre la form finché l'indice è definito
+                if st.session_state.edit_idx is not None:
+                    df = edit_record(df, st.session_state.edit_idx)
         else:
             if edit_search:
                 st.warning("Nessun record trovato con questi criteri di ricerca.")
@@ -1608,121 +1616,5 @@ def create_sample_excel():
     return template_path
 
 
-
-def create_new_record(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Aggiunge un nuovo record al DataFrame.
-    
-    Args:
-        df: DataFrame contenente i dati
-        
-    Returns:
-        pd.DataFrame: DataFrame aggiornato con il nuovo record
-    """
-    st.subheader("Aggiungi Nuovo Record")
-    
-    # Preparazione dei campi da compilare
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        new_date = st.date_input("Data", format="YYYY-MM-DD")
-        new_orario = st.text_input("Orario (es. 14:30-16:45)")
-        new_dipartimento = st.text_input("Dipartimento")
-        new_classe = st.text_input("Classe di concorso")
-        new_insegnamento_comune = st.text_input("Insegnamento comune")
-        new_pef60 = st.text_input("PeF60 all.1")
-        new_pef30_all2 = st.text_input("PeF30 all.2")
-        new_pef36 = st.text_input("PeF36 all.5")
-    
-    with col2:
-        new_pef30_art13 = st.text_input("PeF30 art.13")
-        new_codice = st.text_input("Codice insegnamento")
-        new_denominazione = st.text_input("Denominazione Insegnamento")
-        new_docente = st.text_input("Docente")
-        new_aula = st.text_input("Aula")
-        new_link = st.text_input("Link Teams")
-        new_cfu = st.text_input("CFU")
-        new_note = st.text_area("Note")
-    
-    # Pulsante per salvare il nuovo record
-    if st.button("Salva nuovo record"):
-        # Verifica che i campi obbligatori siano compilati
-        if not new_date or not new_orario or not new_docente or not new_denominazione:
-            st.error("Errore: i campi Data, Orario, Docente e Denominazione Insegnamento sono obbligatori.")
-            return df
-        
-        # Estrai i componenti dalla data
-        try:
-            giorno = new_date.strftime("%A").capitalize()
-            mese = new_date.strftime("%B").capitalize()
-            anno = str(new_date.year)
-        except Exception as e:
-            st.error(f"Errore nella formattazione della data: {e}")
-            return df
-        
-        # Crea un dizionario con i valori del nuovo record
-        new_record = {
-            'Data': pd.to_datetime(new_date),
-            'Orario': new_orario,
-            'Dipartimento': new_dipartimento,
-            'Classe di concorso': new_classe,
-            'Insegnamento comune': new_insegnamento_comune,
-            'PeF60 all.1': new_pef60,
-            'PeF30 all.2': new_pef30_all2,
-            'PeF36 all.5': new_pef36,
-            'PeF30 art.13': new_pef30_art13,
-            'Codice insegnamento': normalize_code(new_codice),
-            'Denominazione Insegnamento': new_denominazione,
-            'Docente': new_docente,
-            'Aula': new_aula,
-            'Link Teams': new_link,
-            'CFU': float(new_cfu) if new_cfu.strip() else None,
-            'Note': new_note,
-            'Giorno': giorno,
-            'Mese': mese,
-            'Anno': anno
-        }
-        
-        # Tentativo diretto di inserimento nel database SQLite
-        sqlite_success = False
-        try:
-            from db_utils import save_record
-            
-            # Tenta l'inserimento diretto nel database SQLite
-            if save_record(new_record):
-                sqlite_success = True
-                try:
-                    from log_utils import logger
-                    logger.info("Nuovo record inserito con successo nel database SQLite")
-                except ImportError:
-                    pass
-        except ImportError:
-            # Il modulo db_utils non è disponibile
-            try:
-                from log_utils import logger
-                logger.warning("Modulo db_utils non disponibile, utilizzo solo JSON")
-            except ImportError:
-                pass
-        except Exception as e:
-            # Errore nell'inserimento SQLite
-            try:
-                from log_utils import logger
-                logger.error(f"Errore nell'inserimento del nuovo record in SQLite: {str(e)}")
-                import traceback
-                logger.error(traceback.format_exc())
-            except ImportError:
-                pass
-        
-        # Aggiungi il nuovo record al DataFrame in memoria
-        df = pd.concat([df, pd.DataFrame([new_record])], ignore_index=True)
-        
-        # Salva il DataFrame aggiornato nel file JSON per retrocompatibilità
-        save_data(df)
-        
-        success_msg = "Nuovo record aggiunto con successo!"
-        if sqlite_success:
-            success_msg += " (Salvato in SQLite e JSON)"
-            
-        st.success(success_msg)
-    
-    return df
+# Utilizziamo la funzione centralizzata da data_utils invece di quella locale
+from data_utils import create_new_record

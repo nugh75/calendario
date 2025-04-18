@@ -56,12 +56,16 @@ def create_new_record(df: pd.DataFrame) -> pd.DataFrame:
         new_dipartimento = st.text_input("Dipartimento")
         new_classe = st.text_input("Classe di concorso")
         new_insegnamento_comune = st.text_input("Insegnamento comune")
-        new_pef60 = st.text_input("PeF60 all.1")
-        new_pef30_all2 = st.text_input("PeF30 all.2")
-        new_pef36 = st.text_input("PeF36 all.5")
+        
+        # Opzioni per i campi PeF: valori ammissibili sono solo "D", "P" o "---"
+        pef_options = ["---", "D", "P"]
+        
+        new_pef60 = st.selectbox("PeF60 all.1", options=pef_options)
+        new_pef30_all2 = st.selectbox("PeF30 all.2", options=pef_options)
+        new_pef36 = st.selectbox("PeF36 all.5", options=pef_options)
     
     with col2:
-        new_pef30_art13 = st.text_input("PeF30 art.13")
+        new_pef30_art13 = st.selectbox("PeF30 art.13", options=pef_options)
         new_codice = st.text_input("Codice insegnamento")
         new_denominazione = st.text_input("Denominazione Insegnamento")
         new_docente = st.text_input("Docente")
