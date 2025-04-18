@@ -72,3 +72,88 @@ def delete_record(df: pd.DataFrame, index: int) -> pd.DataFrame:
     st.success("Record eliminato con successo!")
     
     return df
+
+
+def delete_filtered_records(original_df: pd.DataFrame, filtered_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Elimina tutti i record filtrati dal DataFrame e dal database.
+    
+    Args:
+        original_df: DataFrame originale completo
+        filtered_df: DataFrame contenente solo i record filtrati da eliminare
+        
+    Returns:
+        pd.DataFrame: DataFrame aggiornato senza i record eliminati
+    """
+    if filtered_df.empty:
+        st.warning("Nessun record da eliminare con i filtri correnti.")
+        return original_df
+
+    try:
+        # Creazione logger se disponibile
+        try:
+            from log_utils import logger
+        except ImportError:
+            logger = None
+            
+        # Numero di record da eliminare
+        num_records = len(filtered_df)
+
+        # Crea un indice per i record da eliminare
+        indices_to_delete = []
+        
+        # Per ogni record nel DataFrame filtrato, trova il corrispondente indice nel DataFrame originale
+        for _, filtered_row in filtered_df.iterrows():
+            # Crea una maschera per identificare questo record nel DataFrame originale
+            # Utilizziamo colonne chiave che dovrebbero essere uniche quando combinate
+            mask = (original_df['Data'] == filtered_row['Data']) & \
+                   (original_df['Orario'] == filtered_row['Orario']) & \
+                   (original_df['Docente'] == filtered_row['Docente']) & \
+                   (original_df['Denominazione Insegnamento'] == filtered_row['Denominazione Insegnamento'])
+            
+            # Ottieni gli indici dei record corrispondenti
+            matching_indices = original_df[mask].index.tolist()
+            
+            # Aggiungi questi indici alla lista dei record da eliminare
+            indices_to_delete.extend(matching_indices)
+
+        # Elimina i record da SQLite se possibile
+        try:
+            from db_utils import delete_record as delete_sql_record
+            
+            sqlite_success_count = 0
+            for idx in indices_to_delete:
+                record_data = original_df.iloc[idx].to_dict()
+                if delete_sql_record(record_data):
+                    sqlite_success_count += 1
+                    
+            if logger:
+                logger.info(f"Eliminati {sqlite_success_count}/{num_records} record dal database SQLite")
+                
+        except ImportError:
+            if logger:
+                logger.warning("Modulo db_utils non disponibile, eliminazione solo dal JSON")
+        except Exception as e:
+            if logger:
+                logger.error(f"Errore nell'eliminazione multipla dei record da SQLite: {str(e)}")
+                logger.error(traceback.format_exc())
+
+        # Elimina i record dal DataFrame originale
+        updated_df = original_df.drop(indices_to_delete).reset_index(drop=True)
+        
+        # Salva il DataFrame aggiornato
+        from data_operations import save_data
+        save_data(updated_df, replace_file=True)
+        
+        # Conferma
+        st.success(f"✅ {num_records} record eliminati con successo!")
+        
+        return updated_df
+        
+    except Exception as e:
+        error_msg = f"Si è verificato un errore durante l'eliminazione multipla: {str(e)}"
+        if 'logger' in locals() and logger:
+            logger.error(error_msg)
+            logger.error(traceback.format_exc())
+        st.error(error_msg)
+        return original_df
