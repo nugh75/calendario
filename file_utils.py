@@ -18,6 +18,20 @@ from data_utils import normalize_code, BASE_COLUMNS, FULL_COLUMNS
 from db_operations import load_data, save_data, delete_record
 from db_edit_operation import edit_record
 
+# Definizione delle liste di classi di concorso per i gruppi A e B
+# Classi che mostrano anche risultati della Trasversale A quando cercate
+CLASSI_GRUPPO_A = [
+    'A001', 'A007', 'A008', 'A011', 'A012', 'A013', 'A017', 'A018', 'A019',
+    'A022', 'A023', 'AA24', 'AB24', 'AC24', 'AL24', 'A029', 'A030',
+    'A037', 'A053', 'A054', 'A061', 'A063', 'A064'
+]
+
+# Classi che mostrano anche risultati della Trasversale B quando cercate
+CLASSI_GRUPPO_B = [
+    'A020', 'A026', 'A027', 'A028', 'A040', 'A042', 'A045', 'A046',
+    'A050', 'A060', 'B015'
+]
+
 # Costanti per i file
 DATA_FOLDER = 'dati'
 DEFAULT_JSON_FILE = 'dati.json'
@@ -942,9 +956,9 @@ def admin_interface(df: pd.DataFrame) -> pd.DataFrame:
         dipartimenti = sorted(df['Dipartimento'].dropna().unique())
         dipartimento_selected = st.multiselect("Dipartimento:", dipartimenti, key="admin_filter_dipartimento")
             
-        # Filtro per Classe di concorso
-        classi_concorso = sorted(df['Classe di concorso'].dropna().unique())
-        classe_concorso_selected = st.multiselect("Classe di concorso:", classi_concorso, key="admin_filter_classe")
+        # Filtro per classe di concorso con funzionalità di ricerca testuale
+        st.markdown("##### Cerca per classe di concorso")
+        insegnamento_comune_search = st.text_input("Cerca classe:", placeholder="Ad es.: A022, A023...", key="admin_filter_insegnamento_comune")
         
         st.markdown("---")
         
@@ -1066,9 +1080,42 @@ def admin_interface(df: pd.DataFrame) -> pd.DataFrame:
         if insegnamento_selected:
             display_df = display_df[display_df['Denominazione Insegnamento'].isin(insegnamento_selected)]
             
-        # Filtro per classe di concorso
-        if classe_concorso_selected:
-            display_df = display_df[display_df['Classe di concorso'].isin(classe_concorso_selected)]
+        # Filtro per insegnamento comune con logica avanzata per trasversali
+        if insegnamento_comune_search:
+            search_term_upper = insegnamento_comune_search.upper()
+            
+            # Inizializza la maschera di filtro base (ricerca standard nell'insegnamento comune)
+            base_mask = display_df['Insegnamento comune'].fillna('').astype(str).str.upper().str.contains(search_term_upper)
+            
+            # Flag per sapere se dobbiamo aggiungere trasversali
+            include_trasversale_a = False
+            include_trasversale_b = False
+            
+            # Controlla se il termine di ricerca è una classe del gruppo A o B
+            for classe in CLASSI_GRUPPO_A:
+                if classe.upper() in search_term_upper or search_term_upper in classe.upper():
+                    include_trasversale_a = True
+                    break
+                    
+            for classe in CLASSI_GRUPPO_B:
+                if classe.upper() in search_term_upper or search_term_upper in classe.upper():
+                    include_trasversale_b = True
+                    break
+            
+            # Crea la maschera finale
+            final_mask = base_mask
+            
+            # Aggiungi i record della trasversale A o B se necessario
+            if include_trasversale_a:
+                trasversale_a_mask = display_df['Insegnamento comune'].fillna('').astype(str).str.upper().str.contains('TRASVERSALE A')
+                final_mask = final_mask | trasversale_a_mask
+                
+            if include_trasversale_b:
+                trasversale_b_mask = display_df['Insegnamento comune'].fillna('').astype(str).str.upper().str.contains('TRASVERSALE B')
+                final_mask = final_mask | trasversale_b_mask
+            
+            # Applica il filtro finale
+            display_df = display_df[final_mask]
             
         # Filtro per mese
         if mese_selected:

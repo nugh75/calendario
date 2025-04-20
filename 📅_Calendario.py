@@ -18,6 +18,20 @@ from data_utils import create_new_record, edit_record
 from file_utils import delete_record
 from teams_utils import apply_teams_links_to_dataframe
 
+# Definizione delle liste di classi di concorso per i gruppi A e B
+# Classi che mostrano anche risultati della Trasversale A quando cercate
+CLASSI_GRUPPO_A = [
+    'A001', 'A007', 'A008', 'A011', 'A012', 'A013', 'A017', 'A018', 'A019',
+    'A022', 'A023', 'AA24', 'AB24', 'AC24', 'AL24', 'A029', 'A030',
+    'A037', 'A053', 'A054', 'A061', 'A063', 'A064'
+]
+
+# Classi che mostrano anche risultati della Trasversale B quando cercate
+CLASSI_GRUPPO_B = [
+    'A020', 'A026', 'A027', 'A028', 'A040', 'A042', 'A045', 'A046',
+    'A050', 'A060', 'B015'
+]
+
 def main():
     """Funzione principale che gestisce l'applicazione."""
     
@@ -156,10 +170,12 @@ def main():
             docenti = sorted(df['Docente'].dropna().unique())
             docente_selected = st.sidebar.multiselect("Seleziona docente:", docenti)
             
-            # Filtro per classe di concorso
-            st.sidebar.subheader("🎯 Classe di Concorso")
-            classi_concorso = sorted(df['Classe di concorso'].dropna().unique())
-            classe_concorso_selected = st.sidebar.multiselect("Seleziona classe di concorso:", classi_concorso)
+            # Filtro per classe di concorso con funzionalità di ricerca
+            st.sidebar.subheader("🎯 Cerca per classe di concorso")
+            # Campo di ricerca testuale per insegnamento comune
+            insegnamento_comune_search = st.sidebar.text_input("Cerca classe:", placeholder="Ad es.: A022, A023...")
+            # Lista degli insegnamenti comuni disponibili
+            insegnamenti_comuni = sorted(df['Insegnamento comune'].dropna().unique())
             
             # Filtri per percorsi formativi
             st.sidebar.subheader("🎓 Percorsi Formativi")
@@ -214,9 +230,42 @@ def main():
         if docente_selected:
             filtered_df = filtered_df[filtered_df['Docente'].isin(docente_selected)]
             
-        # Filtro per classe di concorso
-        if classe_concorso_selected:
-            filtered_df = filtered_df[filtered_df['Classe di concorso'].isin(classe_concorso_selected)]
+        # Filtro per insegnamento comune con logica avanzata per trasversali
+        if insegnamento_comune_search:
+            search_term_upper = insegnamento_comune_search.upper()
+            
+            # Inizializza la maschera di filtro base (ricerca standard nell'insegnamento comune)
+            base_mask = filtered_df['Insegnamento comune'].fillna('').astype(str).str.upper().str.contains(search_term_upper)
+            
+            # Flag per sapere se dobbiamo aggiungere trasversali
+            include_trasversale_a = False
+            include_trasversale_b = False
+            
+            # Controlla se il termine di ricerca è una classe del gruppo A o B
+            for classe in CLASSI_GRUPPO_A:
+                if classe.upper() in search_term_upper or search_term_upper in classe.upper():
+                    include_trasversale_a = True
+                    break
+                    
+            for classe in CLASSI_GRUPPO_B:
+                if classe.upper() in search_term_upper or search_term_upper in classe.upper():
+                    include_trasversale_b = True
+                    break
+            
+            # Crea la maschera finale
+            final_mask = base_mask
+            
+            # Aggiungi i record della trasversale A o B se necessario
+            if include_trasversale_a:
+                trasversale_a_mask = filtered_df['Insegnamento comune'].fillna('').astype(str).str.upper().str.contains('TRASVERSALE A')
+                final_mask = final_mask | trasversale_a_mask
+                
+            if include_trasversale_b:
+                trasversale_b_mask = filtered_df['Insegnamento comune'].fillna('').astype(str).str.upper().str.contains('TRASVERSALE B')
+                final_mask = final_mask | trasversale_b_mask
+            
+            # Applica il filtro finale
+            filtered_df = filtered_df[final_mask]
         
         # Filtro per percorsi formativi
         if percorsi_selected:
