@@ -119,7 +119,7 @@ def show_admin_management():
                 st.error(f"Errore nella generazione del template Excel: {str(e)}")
         
         st.write("---")
-        uploaded_file = st.file_uploader("Scegli un file Excel", type=["xlsx", "xls"])
+        uploaded_file = st.file_uploader("Scegli un file Excel o CSV", type=["xlsx", "xls", "csv"])
         
         if uploaded_file is not None:
             if st.button("Importa Dati"):

@@ -20,11 +20,11 @@ from file_utils import (
 
 def process_excel_upload(uploaded_file, debug_container=None) -> pd.DataFrame:
     """
-    Processa un file Excel caricato dall'utente.
+    Processa un file Excel o CSV caricato dall'utente.
     I campi Giorno, Mese e Anno vengono generati automaticamente dalla colonna Data.
     
     Args:
-        uploaded_file: File Excel caricato tramite st.file_uploader
+        uploaded_file: File Excel o CSV caricato tramite st.file_uploader
         debug_container: Container Streamlit per i messaggi di debug (opzionale)
         
     Returns:
@@ -93,15 +93,20 @@ def process_excel_upload(uploaded_file, debug_container=None) -> pd.DataFrame:
         # Passo 1: Preparazione e localizzazione
         current_step += 1
         update_progress(current_step, total_steps, "Preparazione e impostazione localizzazione")
-        debug_container.text("Avvio processo di importazione Excel...")
+        debug_container.text("Avvio processo di importazione...")
         # Imposta localizzazione italiana e verifica se è stato impostato correttamente
         locale_set = setup_locale()
         if not locale_set:
             debug_container.warning("Impossibile impostare la localizzazione italiana. I nomi di giorni e mesi potrebbero non essere in italiano.")
         
-        # Passo 2: Tentativo di lettura del file Excel
+        # Determina il tipo di file in base all'estensione
+        file_name = uploaded_file.name.lower()
+        is_csv = file_name.endswith('.csv')
+        file_type = "CSV" if is_csv else "Excel"
+        
+        # Passo 2: Tentativo di lettura del file
         current_step += 1
-        update_progress(current_step, total_steps, "Lettura del file Excel")
+        update_progress(current_step, total_steps, f"Lettura del file {file_type}")
         
         # Definisci i tipi di dati attesi per le colonne problematiche
         expected_dtypes = {
@@ -119,13 +124,43 @@ def process_excel_upload(uploaded_file, debug_container=None) -> pd.DataFrame:
         # Prima, tentiamo di leggere senza saltare righe per verificare la struttura del file
         try:
             # Leggi prima il file senza saltare righe per ispezionarlo
-            preview_df = pd.read_excel(uploaded_file, nrows=10)
+            if is_csv:
+                # Prova a leggere il file CSV con diverse codifiche e delimitatori
+                encodings = ['utf-8', 'latin1', 'ISO-8859-1', 'cp1252']
+                separators = [',', ';', '\t']
+                preview_df = None
+                
+                for encoding in encodings:
+                    if preview_df is not None:
+                        break
+                    for sep in separators:
+                        try:
+                            # Riavvolgi il file prima di ogni tentativo
+                            uploaded_file.seek(0)
+                            preview_df = pd.read_csv(uploaded_file, nrows=10, encoding=encoding, sep=sep)
+                            if not preview_df.empty:
+                                debug_container.success(f"File CSV letto correttamente con codifica {encoding} e separatore '{sep}'")
+                                # Memorizza le impostazioni corrette per l'uso successivo
+                                csv_encoding = encoding
+                                csv_separator = sep
+                                break
+                        except Exception as e:
+                            continue
+                
+                if preview_df is None:
+                    progress_bar.empty()
+                    status_text.empty()
+                    st.error("⚠️ Importazione fallita: Impossibile leggere il file CSV. Prova con un formato diverso.")
+                    return None
+            else:
+                # Per i file Excel, usa il metodo standard
+                preview_df = pd.read_excel(uploaded_file, nrows=10)
             
             # Verifica se il DataFrame è vuoto dopo la lettura
             if preview_df.empty:
                 progress_bar.empty()
                 status_text.empty()
-                st.error("⚠️ Importazione fallita: Il file Excel caricato è vuoto.")
+                st.error(f"⚠️ Importazione fallita: Il file {file_type} caricato è vuoto.")
                 return None
             
             # Determina automaticamente se ci sono righe di intestazione da saltare
@@ -151,27 +186,31 @@ def process_excel_upload(uploaded_file, debug_container=None) -> pd.DataFrame:
             uploaded_file.seek(0)
             
             # Ora leggi il file con il numero corretto di righe da saltare
-            df = pd.read_excel(uploaded_file, skiprows=skip_rows, dtype=expected_dtypes)
+            if is_csv:
+                df = pd.read_csv(uploaded_file, skiprows=skip_rows, dtype=expected_dtypes, 
+                                 encoding=csv_encoding, sep=csv_separator)
+            else:
+                df = pd.read_excel(uploaded_file, skiprows=skip_rows, dtype=expected_dtypes)
             
             # Verifica iniziale della struttura del file
             if len(df) == 0:
                 progress_bar.empty()
                 status_text.empty()
-                st.error("⚠️ Importazione fallita: Il file Excel caricato è vuoto.")
+                st.error(f"⚠️ Importazione fallita: Il file {file_type} caricato è vuoto.")
                 return None
                 
             if len(df.columns) < 4:  # Minimo di colonne essenziali (Data, Orario, Docente, Denominazione)
                 progress_bar.empty()
                 status_text.empty()
-                st.error("⚠️ Importazione fallita: Il file Excel non ha la struttura corretta. Mancano colonne essenziali.")
+                st.error(f"⚠️ Importazione fallita: Il file {file_type} non ha la struttura corretta. Mancano colonne essenziali.")
                 st.info("Scarica il template per vedere la struttura corretta.")
                 return None
                 
-        except Exception as excel_err:
+        except Exception as file_err:
             progress_bar.empty()
             status_text.empty()
-            st.error(f"⚠️ Importazione fallita: Errore nella lettura del file Excel. {excel_err}")
-            st.info("Assicurati che il file sia nel formato Excel (.xlsx o .xls) e che non sia danneggiato.")
+            st.error(f"⚠️ Importazione fallita: Errore nella lettura del file {file_type}. {file_err}")
+            st.info(f"Assicurati che il file sia nel formato corretto ({file_type}) e che non sia danneggiato.")
             return None
 
         # Passo 3: Gestione delle colonne - Mappatura intelligente
