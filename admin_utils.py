@@ -151,7 +151,7 @@ def upload_excel_file(uploaded_file):
             'action_selected': False,
             'action': None,
             'duplicate_keys': None,
-            'key_columns': ['Data', 'Orario', 'Docente', 'Denominazione Insegnamento']
+            'key_columns': ['Data', 'Orario', 'Docente', 'Denominazione Insegnamento', 'Insegnamento comune']
         }
     
     # FASE 1: Elaborazione iniziale del file Excel

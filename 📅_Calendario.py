@@ -68,12 +68,7 @@ def main():
             st.markdown("### 🔍 Filtra il Calendario")
             st.write("Utilizza i filtri sottostanti per visualizzare le lezioni di tuo interesse.")
             
-            # Campo di ricerca testuale (prima di tutti gli altri filtri)
-            search_term = st.sidebar.text_input("Cerca nei record", 
-                                 placeholder="Docente, insegnamento, data...",
-                                 key="calendar_search")
-            
-            # Selettore delle colonne da visualizzare (subito dopo la ricerca)
+            # Selettore delle colonne da visualizzare (al primo posto)
             st.sidebar.subheader("👁️ Visualizzazione Colonne")
             
             # Definisci tutte le colonne disponibili con etichette user-friendly
@@ -125,6 +120,35 @@ def main():
             
             st.sidebar.markdown("---")
             
+            # Campo di ricerca testuale (secondo filtro)
+            search_term = st.sidebar.text_input("Cerca nei record", 
+                             placeholder="Docente, insegnamento, data...",
+                             key="calendar_search")
+                             
+            st.sidebar.markdown("---")
+            
+            # Filtro per insegnamento comune (terzo filtro)
+            st.sidebar.subheader("🎯 Cerca per insegnamento comune")
+            # Campo di ricerca testuale per insegnamento comune
+            insegnamento_comune_search = st.sidebar.text_input("Cerca classe:", placeholder="Ad es.: A022, A023...")
+            # Lista degli insegnamenti comuni disponibili
+            insegnamenti_comuni = sorted(df['Insegnamento comune'].dropna().unique())
+            
+            st.sidebar.markdown("---")
+            
+            # Filtri per percorsi formativi (quarto filtro)
+            st.sidebar.subheader("🎓 Percorsi Formativi")
+            pef_cols = ["PeF60 all.1", "PeF30 all.2", "PeF36 all.5", "PeF30 art.13"]
+            pef_options = {
+                "PeF60 (60 CFU)": "PeF60 all.1",
+                "PeF30 all.2 (30 CFU)": "PeF30 all.2",
+                "PeF36 all.5 (36 CFU)": "PeF36 all.5",
+                "PeF30 art.13 (30 CFU)": "PeF30 art.13"
+            }
+            percorsi_selected = st.sidebar.multiselect("Seleziona percorso:", list(pef_options.keys()))
+            
+            st.sidebar.markdown("---")
+            
             # Filtro per periodo (mese e intervallo di date)
             st.sidebar.subheader("📆 Periodo")
             mesi = sorted(df['Mese'].dropna().unique())
@@ -169,23 +193,7 @@ def main():
             docenti = sorted(df['Docente'].dropna().unique())
             docente_selected = st.sidebar.multiselect("Seleziona docente:", docenti)
             
-            # Filtro per insegnamento comune con funzionalità di ricerca
-            st.sidebar.subheader("🎯 Cerca per insegnamento comune")
-            # Campo di ricerca testuale per insegnamento comune
-            insegnamento_comune_search = st.sidebar.text_input("Cerca classe:", placeholder="Ad es.: A022, A023...")
-            # Lista degli insegnamenti comuni disponibili
-            insegnamenti_comuni = sorted(df['Insegnamento comune'].dropna().unique())
-            
-            # Filtri per percorsi formativi
-            st.sidebar.subheader("🎓 Percorsi Formativi")
-            pef_cols = ["PeF60 all.1", "PeF30 all.2", "PeF36 all.5", "PeF30 art.13"]
-            pef_options = {
-                "PeF60 (60 CFU)": "PeF60 all.1",
-                "PeF30 all.2 (30 CFU)": "PeF30 all.2",
-                "PeF36 all.5 (36 CFU)": "PeF36 all.5",
-                "PeF30 art.13 (30 CFU)": "PeF30 art.13"
-            }
-            percorsi_selected = st.sidebar.multiselect("Seleziona percorso:", list(pef_options.keys()))
+            # I filtri per percorsi formativi sono stati spostati
             
             # Assicurati che ci siano sempre alcune colonne minime selezionate
             if not columns_to_display:

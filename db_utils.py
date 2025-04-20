@@ -321,11 +321,13 @@ def save_record(record_data: Dict) -> bool:
         # Controlla se il record esiste già (per data, ora e docente)
         data_str = pd.to_datetime(record_data.get('Data')).strftime('%Y-%m-%d')
         orario = record_data.get('Orario', '')
+        insegnamento_comune = record_data.get('Insegnamento comune', '')
+        denominazione = record_data.get('Denominazione Insegnamento', '')
         
         cursor.execute('''
             SELECT id FROM lezioni 
-            WHERE data = ? AND orario = ? AND docente_id = ?
-        ''', (data_str, orario, docente_id))
+            WHERE data = ? AND orario = ? AND docente_id = ? AND denominazione_insegnamento = ? AND insegnamento_comune = ?
+        ''', (data_str, orario, docente_id, denominazione, insegnamento_comune))
         
         existing_id = cursor.fetchone()
         

@@ -400,7 +400,7 @@ def save_data(df: pd.DataFrame, replace_file: bool = False) -> str:
         # Rimuovi duplicati basati su colonne chiave
         pre_dedup = len(df)
         df = df.drop_duplicates(
-            subset=['Data', 'Orario', 'Docente', 'Denominazione Insegnamento'], 
+            subset=['Data', 'Orario', 'Docente', 'Denominazione Insegnamento', 'Insegnamento comune'], 
             keep='last'
         )
         post_dedup = len(df)

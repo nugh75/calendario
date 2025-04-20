@@ -8,6 +8,7 @@ import streamlit as st
 import traceback
 import time
 import locale
+import re  # Importazione aggiunta per le espressioni regolari
 from typing import Optional, Dict, Any, List, Tuple
 from datetime import datetime
 
@@ -173,30 +174,185 @@ def process_excel_upload(uploaded_file, debug_container=None) -> pd.DataFrame:
             st.info("Assicurati che il file sia nel formato Excel (.xlsx o .xls) e che non sia danneggiato.")
             return None
 
-        # Passo 3: Gestione delle colonne
+        # Passo 3: Gestione delle colonne - Mappatura intelligente
         current_step += 1
         update_progress(current_step, total_steps, "Preparazione delle colonne")
         
-        # Gestisci solo le colonne essenziali (senza Giorno, Mese, Anno)
-        essential_columns = BASE_COLUMNS  # Colonne essenziali escludendo Giorno, Mese, Anno
+        # Colonne essenziali (senza Giorno, Mese, Anno che vengono generati automaticamente)
+        essential_columns = BASE_COLUMNS
+        
+        # Normalizza le intestazioni del file Excel (rimuovi spazi in eccesso, converti in minuscolo)
+        original_columns = df.columns.tolist()
+        normalized_excel_columns = [str(col).strip().lower() for col in original_columns]
         
         # Mostra informazioni sulle colonne rilevate
         debug_container.info(f"Colonne rilevate nel file: {len(df.columns)}")
-        debug_container.info(f"Nomi delle colonne: {df.columns.tolist()}")
+        debug_container.info(f"Nomi delle colonne originali: {original_columns}")
         
-        # Se ci sono meno colonne del previsto
-        if len(df.columns) <= len(essential_columns):
-            # Assegna i nomi delle colonne disponibili
-            df.columns = essential_columns[:len(df.columns)]
-            # Aggiungi colonne essenziali mancanti
-            for col in essential_columns[len(df.columns):]:
+        # Crea un mapping tra le colonne standard e le colonne del file Excel
+        column_mapping = {}
+        unmapped_columns = []
+        
+        # Crea una lista di possibili varianti dei nomi delle colonne standard
+        column_variants = {
+            'Data': ['data', 'date', 'giorno', 'day'],
+            'Orario': ['orario', 'ora', 'hour', 'time', 'ora inizio', 'ora fine'],
+            'Dipartimento': ['dipartimento', 'department', 'dip', 'dipartimento di riferimento'],
+            'Insegnamento comune': ['insegnamento comune', 'ins comune', 'comune', 'common'],
+            'PeF60 all.1': ['pef60 all.1', 'pef60', 'all.1', 'allegato 1'],
+            'PeF30 all.2': ['pef30 all.2', 'pef30', 'all.2', 'allegato 2'],
+            'PeF36 all.5': ['pef36 all.5', 'pef36', 'all.5', 'allegato 5'],
+            'PeF30 art.13': ['pef30 art.13', 'art.13', 'articolo 13'],
+            'Codice insegnamento': ['codice insegnamento', 'codice', 'code', 'id corso', 'id insegnamento', 'course code'],
+            'Denominazione Insegnamento': ['denominazione insegnamento', 'denominazione', 'insegnamento', 'materia', 'corso', 'subject', 'course'],
+            'Docente': ['docente', 'prof', 'professore', 'teacher', 'instructor'],
+            'Aula': ['aula', 'room', 'classe', 'class', 'location'],
+            'Link Teams': ['link teams', 'teams', 'link', 'url', 'collegamento'],
+            'CFU': ['cfu', 'crediti', 'crediti formativi', 'credits'],
+            'Note': ['note', 'notes', 'annotazioni', 'commenti', 'comments']
+        }
+        
+        # Per ogni colonna standard, cerca una corrispondenza nel file Excel
+        for std_col in essential_columns:
+            found = False
+            std_col_lower = std_col.lower()
+            
+            # Prima cerca una corrispondenza esatta
+            if std_col_lower in normalized_excel_columns:
+                idx = normalized_excel_columns.index(std_col_lower)
+                column_mapping[std_col] = original_columns[idx]
+                found = True
+            else:
+                # Poi cerca tra le varianti
+                variants = column_variants.get(std_col, [])
+                for variant in variants:
+                    for i, excel_col in enumerate(normalized_excel_columns):
+                        # Verifica se la variante è nel nome della colonna Excel
+                        if variant == excel_col or variant in excel_col.split():
+                            column_mapping[std_col] = original_columns[i]
+                            found = True
+                            break
+                    if found:
+                        break
+            
+            # Se non è stata trovata nessuna corrispondenza
+            if not found:
+                unmapped_columns.append(std_col)
+        
+        # Identifica colonne nel file Excel che non corrispondono a colonne standard
+        mapped_excel_cols = list(column_mapping.values())
+        extra_columns = [col for col in original_columns if col not in mapped_excel_cols]
+        
+        # Registra dettagli sulle colonne extra per analisi futura
+        if extra_columns:
+            # Estrai un campione dei valori delle colonne extra per capire cosa contengono
+            extra_columns_sample = {}
+            sample_size = min(5, len(df))
+            for col in extra_columns:
+                # Prendi un campione dei primi valori non nulli
+                sample_values = df[col].dropna().head(sample_size).tolist()
+                extra_columns_sample[col] = sample_values
+            
+            # Salva informazioni sulle colonne extra nei log
+            try:
+                from log_utils import logger
+                logger.info(f"Colonne aggiuntive ignorate durante l'importazione: {extra_columns}")
+                logger.info(f"Campione valori colonne extra: {extra_columns_sample}")
+            except ImportError:
+                pass
+        
+        # Log delle informazioni di mappatura
+        debug_container.info(f"Colonne mappate: {len(column_mapping)}/{len(essential_columns)}")
+        if unmapped_columns:
+            debug_container.warning(f"Colonne standard non trovate: {unmapped_columns}")
+        if extra_columns:
+            debug_container.warning(f"Colonne extra non utilizzate: {extra_columns}")
+        
+        # Crea un nuovo DataFrame con le colonne mappate correttamente
+        new_df = pd.DataFrame()
+        
+        # Copia i dati dalle colonne mappate
+        for std_col, excel_col in column_mapping.items():
+            new_df[std_col] = df[excel_col]
+        
+        # Aggiungi colonne standard mancanti con valori nulli
+        for col in unmapped_columns:
+            new_df[col] = None
+            debug_container.warning(f"Aggiunta colonna mancante: {col}")
+        
+        # Sostituisci il DataFrame originale con quello mappato
+        df = new_df
+        
+        # Verifica le colonne essenziali per la validità dei dati
+        missing_essential = [col for col in ['Data', 'Orario', 'Docente', 'Denominazione Insegnamento'] if col not in column_mapping]
+        if missing_essential:
+            progress_bar.empty()
+            status_text.empty()
+            st.error(f"⚠️ Importazione fallita: Mancano colonne essenziali: {', '.join(missing_essential)}")
+            st.info("Scarica il template per vedere la struttura corretta delle colonne.")
+            return None
+        
+        # Mostra un riepilogo della mappatura all'utente con feedback migliorato
+        with st.expander("Dettaglio mappatura colonne"):
+            st.write("**Colonne riconosciute e mappate:**")
+            for std_col, excel_col in column_mapping.items():
+                st.write(f"- '{excel_col}' → '{std_col}'")
+            
+            if extra_columns:
+                st.write("**Colonne aggiuntive ignorate:**")
+                st.info("Le seguenti colonne non sono state riconosciute e sono state ignorate durante l'importazione:")
+                
+                # Estrai piccoli campioni per mostrare cosa contenevano queste colonne
+                sample_size = min(3, len(df))
+                for col in extra_columns:
+                    try:
+                        # Verifica se la colonna esiste ancora nel dataframe prima di accedervi
+                        if col in df.columns:
+                            # Mostra un campione dei primi valori non nulli
+                            sample_values = df[col].dropna().head(sample_size).tolist()
+                            sample_str = ", ".join([f'"{v}"' for v in sample_values]) if sample_values else "nessun valore"
+                        else:
+                            sample_str = "colonna rimossa"
+                        st.write(f"- '{col}' (esempi: {sample_str})")
+                    except Exception as col_err:
+                        # In caso di errore, mostra un messaggio generico
+                        st.write(f"- '{col}' (impossibile mostrare esempi)")
+                        debug_container.warning(f"Errore nell'accesso alla colonna '{col}': {str(col_err)}")
+                
+                st.info("💡 Suggerimento: Se ritieni che alcune di queste colonne contengano dati importanti, considera di rinominarle nel file Excel usando i nomi standard delle colonne e riprova l'importazione.")
+            
+            if unmapped_columns:
+                st.write("**Colonne standard mancanti create automaticamente:**")
+                missing_essential = [col for col in ['Data', 'Orario', 'Docente', 'Denominazione Insegnamento'] if col in unmapped_columns]
+                if missing_essential:
+                    st.warning(f"⚠️ Attenzione: Mancano colonne essenziali: {', '.join(missing_essential)}. Questi campi sono stati creati vuoti e dovrai compilarli manualmente.")
+                
+                for col in unmapped_columns:
+                    importance = "**essenziale**" if col in ['Data', 'Orario', 'Docente', 'Denominazione Insegnamento'] else "opzionale"
+                    st.write(f"- '{col}' (campo {importance})")
+            
+            # Aggiungi pulsante per scaricare il template
+            st.write("---")
+            st.info("Se hai problemi con l'importazione, puoi scaricare un modello Excel con le colonne corrette:")
+            if st.button("📥 Scarica modello Excel", key="download_template_button"):
+                try:
+                    template_path = create_sample_excel()
+                    with open(template_path, "rb") as file:
+                        template_bytes = file.read()
+                    
+                    st.download_button(
+                        label="⬇️ Clicca per scaricare il modello Excel",
+                        data=template_bytes,
+                        file_name="template_calendario.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+                except Exception as e:
+                    st.error(f"Impossibile generare il template: {str(e)}")
+        
+        # Assicurati che tutte le colonne standard siano presenti
+        for col in essential_columns:
+            if col not in df.columns:
                 df[col] = None
-                debug_container.warning(f"Aggiunta colonna mancante: {col}")
-        else:
-            # Se ci sono più colonne del previsto, prendi solo le colonne essenziali
-            df = df.iloc[:, :len(essential_columns)]
-            df.columns = essential_columns
-            debug_container.warning(f"Rimosse colonne in eccesso. Mantenute solo le prime {len(essential_columns)} colonne.")
         
         # Passo 4: Pulizia dei dati
         current_step += 1
@@ -223,47 +379,112 @@ def process_excel_upload(uploaded_file, debug_container=None) -> pd.DataFrame:
             if removed_rows > 0:
                 status_text.text(f"Rimosse {removed_rows} righe senza orario")
         
-        # Passo 5: Gestione delle date
+        # Passo 5: Gestione avanzata delle date
         current_step += 1
-        update_progress(current_step, total_steps, "Conversione e validazione delle date")
+        update_progress(current_step, total_steps, "Conversione e validazione avanzata delle date")
         
-        # Converti le date in formato datetime con gestione robusta di vari formati
-        # Prima prova a convertire le date con il formato italiano (DD/MM/YYYY o DD-MM-YYYY)
+        # Miglioramento del rilevamento e della conversione dei formati di data
         try:
-            # Verifica se le date potrebbero essere in formato italiano
-            sample_date = str(df['Data'].iloc[0]) if len(df) > 0 else ""
-            debug_container.info(f"Esempio di formato data rilevato: {sample_date}")
-            
-            if len(df) > 0 and isinstance(sample_date, str):
-                # Rileva il possibile separatore (/ o -)
-                separator = "/" if "/" in sample_date else "-" if "-" in sample_date else None
-                if separator and len(sample_date.split(separator)) == 3:
-                    day, month, year = sample_date.split(separator)
-                    # Verifica se il primo numero sembra essere un giorno (1-31)
-                    if day.isdigit() and 1 <= int(day) <= 31:
-                        debug_container.info(f"Rilevato possibile formato data italiano (DD{separator}MM{separator}YYYY)")
-                        # Lista di possibili formati italiani
-                        date_formats = [f'%d{separator}%m{separator}%Y', f'%d{separator}%m{separator}%y']
-                        
-                        # Prova a convertire con i formati italiani
-                        for fmt in date_formats:
+            # Prima verifichiamo se ci sono date da convertire
+            if 'Data' not in df.columns or df.empty:
+                debug_container.warning("Nessuna colonna 'Data' trovata o DataFrame vuoto")
+            else:
+                # Salva una copia delle date originali per riferimento
+                df['Data_originale'] = df['Data'].copy()
+                
+                # Analizza un campione di date per determinare il formato più probabile
+                sample_dates = df['Data'].dropna().head(5).tolist()
+                sample_dates_str = [str(d) for d in sample_dates if pd.notna(d)]
+                
+                debug_container.info(f"Campione di date da analizzare: {sample_dates_str}")
+                
+                # Definisci diversi formati di data comuni da provare
+                # Metti i formati italiani all'inizio per dare loro priorità
+                date_formats = {
+                    "Italiano (GG-MM-AAAA)": ['%d-%m-%Y', '%d-%m-%y'],  # Formato principale richiesto
+                    "Italiano (GG/MM/AAAA)": ['%d/%m/%Y', '%d/%m/%y'],  # Formato italiano alternativo
+                    "Testo Italiano (GG mese AAAA)": ['%d %B %Y', '%d %b %Y'],
+                    "Internazionale (AAAA-MM-GG)": ['%Y-%m-%d'],
+                    "Internazionale (AAAA/MM/GG)": ['%Y/%m/%d'],
+                    "US/UK (MM/GG/AAAA)": ['%m/%d/%Y', '%m/%d/%y'],
+                    "US/UK (MM-GG-AAAA)": ['%m-%d-%Y', '%m-%d-%y'],
+                }
+                
+                # Funzione per testare un formato su un campione di date
+                def test_date_format(date_str, fmt):
+                    try:
+                        dt = pd.to_datetime(date_str, format=fmt)
+                        return not pd.isna(dt)
+                    except:
+                        return False
+                
+                # Conto per ciascun formato quante date del campione riconosce
+                format_scores = {}
+                
+                for format_name, formats in date_formats.items():
+                    format_scores[format_name] = 0
+                    for fmt in formats:
+                        score = sum(1 for d in sample_dates_str if test_date_format(d, fmt))
+                        if score > format_scores[format_name]:
+                            format_scores[format_name] = score
+                
+                # Ordina i formati per punteggio
+                best_formats = sorted(format_scores.items(), key=lambda x: x[1], reverse=True)
+                
+                debug_container.info(f"Analisi dei formati di data: {best_formats}")
+                
+                # Prova a convertire con i formati migliori
+                conversion_success = False
+                for format_name, score in best_formats:
+                    if score > 0:  # Se almeno una data è stata riconosciuta con questo formato
+                        for fmt in date_formats[format_name]:
                             try:
-                                debug_container.info(f"Tentativo di conversione con formato: {fmt}")
-                                df['Data'] = pd.to_datetime(df['Data'], format=fmt, errors='coerce')
-                                if not df['Data'].isna().all():  # Se almeno una data è valida
-                                    debug_container.success(f"Date convertite con successo usando il formato: {fmt}")
+                                temp_dates = pd.to_datetime(df['Data'], format=fmt, errors='coerce')
+                                # Se almeno l'80% delle date sono state convertite correttamente, usa questo formato
+                                valid_ratio = temp_dates.notna().mean()
+                                if valid_ratio >= 0.8:
+                                    df['Data'] = temp_dates
+                                    debug_container.success(f"Date convertite con formato {format_name} ({fmt}): {valid_ratio:.1%} valide")
+                                    conversion_success = True
                                     break
+                                else:
+                                    debug_container.info(f"Formato {format_name} ({fmt}) ha riconosciuto solo {valid_ratio:.1%} delle date")
                             except Exception as e:
-                                debug_container.warning(f"Formato {fmt} non valido: {str(e)}")
+                                debug_container.warning(f"Errore con formato {fmt}: {str(e)}")
+                    
+                    if conversion_success:
+                        break
+                
+                # Se nessun formato specifico ha funzionato abbastanza bene, prova la conversione automatica
+                if not conversion_success:
+                    debug_container.warning("Nessun formato specifico ha funzionato bene. Tentativo di conversione automatica...")
+                    df['Data'] = pd.to_datetime(df['Data'], errors='coerce')
+                    valid_ratio = df['Data'].notna().mean()
+                    debug_container.info(f"Conversione automatica: {valid_ratio:.1%} date valide")
+                
+                # Identifica le date problematiche per fornire feedback all'utente
+                invalid_dates_idx = df['Data'].isna()
+                if invalid_dates_idx.any():
+                    invalid_count = invalid_dates_idx.sum()
+                    debug_container.warning(f"Rilevate {invalid_count} date non valide")
+                    
+                    # Mostra esempi di date non valide
+                    invalid_examples = df.loc[invalid_dates_idx, 'Data_originale'].head(5).tolist()
+                    debug_container.warning(f"Esempi di date non valide: {invalid_examples}")
+                    
+                    # Offri suggerimenti all'utente con priorità al formato italiano
+                    with st.expander("⚠️ Date non valide rilevate"):
+                        st.warning(f"Sono state trovate {invalid_count} date non valide nel file.")
+                        st.write("Esempi di date problematiche:")
+                        for i, example in enumerate(invalid_examples):
+                            st.code(f"{example}")
+                        st.info("Suggerimento: Assicurati che le date siano nel formato italiano GG-MM-AAAA (es. 28-04-2025) o GG/MM/AAAA (es. 28/04/2025)")
+        
         except Exception as format_err:
-            debug_container.warning(f"Errore nel rilevamento del formato data: {str(format_err)}")
+            debug_container.error(f"Errore durante l'analisi del formato delle date: {str(format_err)}")
+            debug_container.error(traceback.format_exc())
         
-        # Se le conversioni specifiche falliscono, tenta la conversione automatica come fallback
-        if 'Data' not in df.columns or df['Data'].isna().all():
-            debug_container.warning("Tentativo di conversione automatica delle date")
-            df['Data'] = pd.to_datetime(df['Data'], errors='coerce')
-        
-        # Rimuovi le righe con date non valide
+        # Rimozione delle righe con date non valide (dopo tutti i tentativi di conversione)
         rows_before_date_filter = len(df)
         df = df.dropna(subset=['Data'])
         rows_after_date_filter = len(df)
@@ -278,7 +499,7 @@ def process_excel_upload(uploaded_file, debug_container=None) -> pd.DataFrame:
                 progress_bar.empty()
                 status_text.empty()
                 st.error("⚠️ Importazione fallita: Tutte le date nel file sono non valide o in un formato non riconosciuto.")
-                st.info("Controlla che le date siano nel formato GG/MM/AAAA o GG-MM-AAAA per il formato italiano, oppure AAAA-MM-GG per il formato standard.")
+                st.info("Controlla che le date siano nel formato italiano GG-MM-AAAA (preferibile) o GG/MM/AAAA. Questi sono i formati ufficiali per le date in Italia.")
                 return None
         
         # Passo 6: Generazione campi derivati dalle date
@@ -303,14 +524,36 @@ def process_excel_upload(uploaded_file, debug_container=None) -> pd.DataFrame:
         if not pd.api.types.is_datetime64_any_dtype(df['Data']):
             debug_container.warning("La colonna Data non è in formato datetime. Tentativo di conversione...")
             df['Data'] = pd.to_datetime(df['Data'], errors='coerce')
-            
-        # Generiamo i giorni e mesi usando il mapping diretto invece di fare affidamento sulla localizzazione
-        # Assicuriamoci che x sia un oggetto datetime prima di chiamare weekday() o month
-        df['Giorno'] = df['Data'].apply(lambda x: italian_days.get(x.weekday(), "") if pd.notnull(x) and hasattr(x, 'weekday') else "").str.capitalize()
-        df['Mese'] = df['Data'].apply(lambda x: italian_months.get(x.month, "") if pd.notnull(x) and hasattr(x, 'month') else "").str.capitalize()
         
-        # Per Anno, utilizziamo lo stesso approccio sicuro con apply() invece di .dt.year
-        df['Anno'] = df['Data'].apply(lambda x: str(x.year) if pd.notnull(x) and hasattr(x, 'year') and not pd.isna(x) else "")
+        # Generiamo i giorni e mesi usando il mapping diretto invece di fare affidamento sulla localizzazione
+        # Gestiamo in modo sicuro le possibili eccezioni nella generazione dei giorni
+        try:
+            # Colonna Giorno - con gestione robusta degli errori
+            df['Giorno'] = df['Data'].apply(
+                lambda x: italian_days.get(x.weekday(), "") if pd.notnull(x) and hasattr(x, 'weekday') else ""
+            )
+            # Capitalizza solo se non ci sono valori NaN
+            if not df['Giorno'].isna().all():
+                df['Giorno'] = df['Giorno'].str.capitalize()
+            
+            # Colonna Mese - con gestione robusta degli errori
+            df['Mese'] = df['Data'].apply(
+                lambda x: italian_months.get(x.month, "") if pd.notnull(x) and hasattr(x, 'month') else ""
+            )
+            # Capitalizza solo se non ci sono valori NaN
+            if not df['Mese'].isna().all():
+                df['Mese'] = df['Mese'].str.capitalize()
+            
+            # Per Anno, utilizziamo lo stesso approccio sicuro con apply() invece di .dt.year
+            df['Anno'] = df['Data'].apply(
+                lambda x: str(x.year) if pd.notnull(x) and hasattr(x, 'year') else ""
+            )
+        except Exception as date_err:
+            debug_container.error(f"Errore durante la generazione di Giorno, Mese e Anno: {str(date_err)}")
+            # Assicuriamo che i campi esistano anche in caso di errore
+            if 'Giorno' not in df.columns: df['Giorno'] = ""
+            if 'Mese' not in df.columns: df['Mese'] = ""
+            if 'Anno' not in df.columns: df['Anno'] = ""
         
         # Controlla se ci sono problemi con i campi generati
         if df['Giorno'].isna().any() or df['Mese'].isna().any():
@@ -321,17 +564,83 @@ def process_excel_upload(uploaded_file, debug_container=None) -> pd.DataFrame:
         current_step += 1
         update_progress(current_step, total_steps, "Validazione finale e normalizzazione dei dati")
         
-        # Gestisci CFU (converti a float dopo aver pulito) con gestione più robusta
+        # Gestione avanzata dei CFU con rilevamento e correzione di errori comuni
         if 'CFU' in df.columns:
-            # Prima converti in stringa e sostituisci le virgole con punti
-            df['CFU'] = df['CFU'].astype(str).str.replace(',', '.')
-            # Pulisci i valori strani prima della conversione
-            df['CFU'] = df['CFU'].replace(['', 'nan', 'None', 'NaN', 'none', '<NA>', 'null'], '0')
-            # Ora converti in numerico, con gestione errori
-            df['CFU'] = pd.to_numeric(df['CFU'], errors='coerce').fillna(0.0)
+            # Salva una copia dei valori originali per riferimento e debug
+            df['CFU_originale'] = df['CFU'].copy()
             
-            # Log dei valori CFU
-            debug_container.info(f"Valori CFU elaborati. Range: {df['CFU'].min()} - {df['CFU'].max()}")
+            # Converti tutto in stringa per un'elaborazione uniforme
+            df['CFU'] = df['CFU'].astype(str)
+            
+            # Funzione avanzata per la normalizzazione e correzione dei CFU
+            def normalize_cfu(cfu_value):
+                if pd.isna(cfu_value) or cfu_value == '' or cfu_value in ['nan', 'None', 'NaN', 'none', '<NA>', 'null']:
+                    return 0.0
+                
+                try:
+                    # Converti a stringa se non lo è già
+                    cfu_str = str(cfu_value).strip()
+                    
+                    # Sostituisci virgole con punti per la notazione decimale
+                    cfu_str = cfu_str.replace(',', '.')
+                    
+                    # Gestisci frazioni comuni (es. "1/2" -> 0.5)
+                    if '/' in cfu_str:
+                        num, denom = map(float, cfu_str.split('/', 1))
+                        return num / denom if denom != 0 else 0.0
+                    
+                    # Gestisci formati come "1h" o "1 ora" (1 ora = 0.125 CFU)
+                    if 'h' in cfu_str.lower() or 'ora' in cfu_str.lower() or 'ore' in cfu_str.lower():
+                        # Estrai solo i numeri
+                        import re
+                        numbers = re.findall(r"[-+]?\d*\.\d+|\d+", cfu_str)
+                        if numbers:
+                            hours = float(numbers[0])
+                            # Converti ore in CFU (8 ore = 1 CFU)
+                            return round(hours / 8, 2)
+                    
+                    # Gestisci valori fuori range
+                    cfu_float = float(cfu_str)
+                    
+                    # Se il valore è troppo grande (probabilmente sono minuti invece di CFU)
+                    if cfu_float > 30:  # Nessun corso ha più di 30 CFU tipicamente
+                        # Potrebbe essere in minuti, converti in CFU (480 minuti = 1 CFU)
+                        return round(cfu_float / 480, 2)
+                    
+                    return cfu_float
+                    
+                except Exception:
+                    return 0.0
+            
+            # Applica la funzione di normalizzazione a tutti i valori
+            df['CFU'] = df['CFU'].apply(normalize_cfu)
+            
+            # Rileva e registra le correzioni significative per il feedback
+            cfu_corrections = []
+            for idx, (original, normalized) in enumerate(zip(df['CFU_originale'], df['CFU'])):
+                if str(original) != str(normalized) and not (pd.isna(original) and normalized == 0.0):
+                    # Registra solo le correzioni significative
+                    try:
+                        if abs(float(str(original).replace(',', '.')) - normalized) > 0.01:
+                            cfu_corrections.append((idx, original, normalized))
+                    except:
+                        cfu_corrections.append((idx, original, normalized))
+            
+            # Fornisci feedback sulle correzioni
+            if cfu_corrections:
+                debug_container.info(f"Corretti {len(cfu_corrections)} valori CFU non standard")
+                
+                # Limitati ai primi 10 esempi per non sovraccaricare l'interfaccia
+                with st.expander(f"ℹ️ Valori CFU corretti automaticamente ({len(cfu_corrections)})"):
+                    st.info("Alcuni valori CFU sono stati normalizzati automaticamente:")
+                    for i, (idx, original, normalized) in enumerate(cfu_corrections[:10]):
+                        st.write(f"- Riga {idx+1}: '{original}' → {normalized}")
+                    if len(cfu_corrections) > 10:
+                        st.write(f"... e altri {len(cfu_corrections) - 10} valori")
+                    st.info("💡 Suggerimento: Per ottenere risultati più precisi, formatta i CFU come numeri decimali nel file Excel (es. 0.5)")
+            
+            # Log dei valori CFU finali
+            debug_container.info(f"Valori CFU elaborati. Range: {df['CFU'].min()} - {df['CFU'].max()}, Media: {df['CFU'].mean():.2f}")
 
         # Gestisci Codice insegnamento (rimuovi .0 se presente) con gestione più robusta
         if 'Codice insegnamento' in df.columns:
@@ -342,9 +651,17 @@ def process_excel_upload(uploaded_file, debug_container=None) -> pd.DataFrame:
             # Rimuovi spazi extra all'inizio e alla fine
             df['Codice insegnamento'] = df['Codice insegnamento'].str.strip()
 
-        # Verifica campi essenziali con feedback più dettagliato
-        missing_fields_rows = []
+        # Sistema intelligente di validazione e rilevamento degli errori
+        validation_issues = {
+            'missing_fields': [],      # Campi obbligatori mancanti
+            'format_issues': [],       # Problemi di formato (es. orario)
+            'suspicious_values': [],   # Valori sospetti che potrebbero essere errori
+            'auto_corrections': []     # Correzioni automatiche applicate
+        }
+        
+        # 1. Verifica dei campi essenziali mancanti
         for idx, row in df.iterrows():
+            # Controlla i campi essenziali
             missing_fields = []
             
             if pd.isna(row['Docente']) or row['Docente'] == '':
@@ -354,16 +671,175 @@ def process_excel_upload(uploaded_file, debug_container=None) -> pd.DataFrame:
                 missing_fields.append('Denominazione Insegnamento')
                 
             if missing_fields:
-                missing_fields_rows.append((idx, row['Data'], missing_fields))
+                date_str = row['Data'].strftime('%d/%m/%Y') if pd.notna(row['Data']) and hasattr(row['Data'], 'strftime') else "Data sconosciuta"
+                validation_issues['missing_fields'].append((idx, date_str, missing_fields))
         
-        if missing_fields_rows:
-            debug_container.warning(f"Trovate {len(missing_fields_rows)} righe con dati incompleti")
-            status_text.text(f"Trovate {len(missing_fields_rows)} righe con dati essenziali mancanti")
+        # 2. Verifica e correzione del formato orario
+        orario_fixed = 0
+        orario_pattern = re.compile(r'^(\d{1,2}):(\d{2})-(\d{1,2}):(\d{2})$')
+        
+        for idx, orario in enumerate(df['Orario']):
+            if pd.isna(orario) or orario == '':
+                continue
+                
+            # Se l'orario è già nel formato corretto, salta
+            if orario_pattern.match(str(orario)):
+                continue
             
-            # Fornisci dettagli sui record problematici
-            with st.expander("Dettagli record con dati incompleti"):
-                for idx, data, campi in missing_fields_rows:
-                    st.write(f"Riga {idx+1} ({data.strftime('%d/%m/%Y')}): Mancano {', '.join(campi)}")
+            original = str(orario)
+            corrected = None
+            
+            # Tentativo di correzione automatica dei formati di orario comuni
+            try:
+                # Caso: separatore diverso da : (es. 14.30-16.45)
+                if re.match(r'^\d{1,2}[.,]\d{2}-\d{1,2}[.,]\d{2}$', original):
+                    corrected = re.sub(r'(\d{1,2})[.,](\d{2})-(\d{1,2})[.,](\d{2})', r'\1:\2-\3:\4', original)
+                
+                # Caso: orari con H (es. 14H30-16H45)
+                elif re.match(r'^\d{1,2}[hH]\d{2}-\d{1,2}[hH]\d{2}$', original):
+                    corrected = re.sub(r'(\d{1,2})[hH](\d{2})-(\d{1,2})[hH](\d{2})', r'\1:\2-\3:\4', original)
+                
+                # Caso: spazi attorno al trattino (es. 14:30 - 16:45)
+                elif re.match(r'^\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}$', original):
+                    corrected = re.sub(r'(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})', r'\1-\2', original)
+                
+                # Caso: formato con testo (es. "dalle 14:30 alle 16:45")
+                elif "alle" in original.lower() and re.search(r'\d{1,2}:\d{2}', original):
+                    # Estrai gli orari
+                    orari = re.findall(r'\d{1,2}:\d{2}', original)
+                    if len(orari) >= 2:
+                        corrected = f"{orari[0]}-{orari[1]}"
+                
+                if corrected and corrected != original:
+                    df.at[idx, 'Orario'] = corrected
+                    validation_issues['auto_corrections'].append((idx, 'Orario', original, corrected))
+                    orario_fixed += 1
+            
+            except Exception as e:
+                debug_container.warning(f"Errore nella correzione dell'orario: {str(e)}")
+        
+        if orario_fixed > 0:
+            debug_container.success(f"Corretti automaticamente {orario_fixed} formati di orario non standard")
+        
+        # 3. Rilevamento di valori sospetti e potenziali errori
+        
+        # 3.1 Controlla durate delle lezioni anomale (meno di 30 minuti o più di 5 ore)
+        for idx, row in df.iterrows():
+            if pd.isna(row['Orario']) or row['Orario'] == '':
+                continue
+                
+            try:
+                # Estrai le ore di inizio e fine
+                if '-' in str(row['Orario']):
+                    start, end = str(row['Orario']).split('-')
+                    
+                    # Converti in minuti dall'inizio della giornata
+                    def time_to_minutes(time_str):
+                        if ':' in time_str:
+                            h, m = map(int, time_str.split(':'))
+                            return h * 60 + m
+                        return 0
+                    
+                    start_min = time_to_minutes(start)
+                    end_min = time_to_minutes(end)
+                    
+                    # Gestisci il caso di lezioni che finiscono dopo mezzanotte
+                    if end_min < start_min:
+                        end_min += 24 * 60  # Aggiungi un giorno
+                        
+                    duration = end_min - start_min
+                    
+                    # Rileva durate sospette
+                    if duration < 30:
+                        validation_issues['suspicious_values'].append((idx, 'Orario', row['Orario'], 'Durata troppo breve (meno di 30 minuti)'))
+                    elif duration > 300:  # 5 ore
+                        validation_issues['suspicious_values'].append((idx, 'Orario', row['Orario'], 'Durata sospettamente lunga (più di 5 ore)'))
+            
+            except Exception:
+                # Se c'è un errore nell'analisi, potrebbe essere un formato di orario non riconosciuto
+                validation_issues['format_issues'].append((idx, 'Orario', row['Orario'], 'Formato non riconosciuto'))
+        
+        # 3.2 Controlla CFU sospetti (molto grandi o con decimali strani)
+        if 'CFU' in df.columns:
+            for idx, cfu in enumerate(df['CFU']):
+                if pd.isna(cfu):
+                    continue
+                
+                try:
+                    cfu_value = float(cfu)
+                    # CFU troppo grandi
+                    if cfu_value > 12:  # Raramente un singolo corso ha più di 12 CFU
+                        validation_issues['suspicious_values'].append((idx, 'CFU', cfu, 'Valore insolitamente alto per un singolo corso'))
+                except:
+                    pass
+        
+        # 4. Visualizza un riepilogo dei problemi rilevati e delle correzioni
+        total_issues = (len(validation_issues['missing_fields']) + 
+                       len(validation_issues['format_issues']) + 
+                       len(validation_issues['suspicious_values']))
+                       
+        total_corrections = len(validation_issues['auto_corrections'])
+        
+        if total_issues > 0 or total_corrections > 0:
+            with st.expander(f"📊 Riepilogo validazione dati ({total_issues} problemi, {total_corrections} correzioni automatiche)"):
+                # Tab per visualizzare diversi tipi di problemi
+                tabs = st.tabs(["Campi mancanti", "Problemi di formato", "Valori sospetti", "Correzioni automatiche"])
+                
+                # Tab 1: Campi mancanti
+                with tabs[0]:
+                    if validation_issues['missing_fields']:
+                        st.warning(f"{len(validation_issues['missing_fields'])} righe con campi essenziali mancanti")
+                        for idx, data_str, campi in validation_issues['missing_fields'][:15]:  # limita a 15 per non sovraccaricare l'UI
+                            st.write(f"- Riga {idx+1} ({data_str}): Mancano {', '.join(campi)}")
+                        if len(validation_issues['missing_fields']) > 15:
+                            st.write(f"... e altri {len(validation_issues['missing_fields']) - 15} record")
+                    else:
+                        st.success("Tutti i campi essenziali sono compilati ✓")
+                
+                # Tab 2: Problemi di formato
+                with tabs[1]:
+                    if validation_issues['format_issues']:
+                        st.warning(f"{len(validation_issues['format_issues'])} problemi di formato rilevati")
+                        for idx, campo, valore, descrizione in validation_issues['format_issues'][:15]:
+                            st.write(f"- Riga {idx+1}, {campo}: '{valore}' → {descrizione}")
+                        if len(validation_issues['format_issues']) > 15:
+                            st.write(f"... e altri {len(validation_issues['format_issues']) - 15} problemi")
+                    else:
+                        st.success("Nessun problema di formato rilevato ✓")
+                
+                # Tab 3: Valori sospetti
+                with tabs[2]:
+                    if validation_issues['suspicious_values']:
+                        st.warning(f"{len(validation_issues['suspicious_values'])} valori potenzialmente errati")
+                        for idx, campo, valore, descrizione in validation_issues['suspicious_values'][:15]:
+                            st.write(f"- Riga {idx+1}, {campo}: '{valore}' → {descrizione}")
+                        if len(validation_issues['suspicious_values']) > 15:
+                            st.write(f"... e altri {len(validation_issues['suspicious_values']) - 15} valori")
+                    else:
+                        st.success("Nessun valore sospetto rilevato ✓")
+                
+                # Tab 4: Correzioni automatiche
+                with tabs[3]:
+                    if validation_issues['auto_corrections']:
+                        st.info(f"{len(validation_issues['auto_corrections'])} correzioni applicate automaticamente")
+                        for idx, campo, originale, corretto in validation_issues['auto_corrections'][:15]:
+                            st.write(f"- Riga {idx+1}, {campo}: '{originale}' → '{corretto}'")
+                        if len(validation_issues['auto_corrections']) > 15:
+                            st.write(f"... e altre {len(validation_issues['auto_corrections']) - 15} correzioni")
+                    else:
+                        st.success("Nessuna correzione automatica necessaria ✓")
+                
+                # Suggerimenti generali
+                st.info("💡 Suggerimento: Per ottenere i migliori risultati, assicurati che i dati seguano questi formati:")
+                st.code("""
+                Data: GG/MM/AAAA (es. 28/04/2025) o AAAA-MM-GG (es. 2025-04-28)
+                Orario: HH:MM-HH:MM (es. 14:30-16:45)
+                CFU: Numero decimale (es. 0.5)
+                """)
+        
+        # Aggiorna lo stato per mostrare i problemi rilevati
+        if len(validation_issues['missing_fields']) > 0:
+            status_text.text(f"Trovate {len(validation_issues['missing_fields'])} righe con dati essenziali mancanti")
 
         # Aggiungiamo un nuovo passo di validazione per SQLite
         current_step += 1
@@ -476,7 +952,7 @@ def create_sample_excel():
     # Aggiungi due righe di esempio
     example_rows = [
         {
-            'Data': '2025-04-28', 
+            'Data': '28-04-2025', 
             'Orario': '14:30-16:45',
             'Dipartimento': 'Area Trasversale - Canale A',
             'Insegnamento comune': 'Trasversale A',
@@ -496,7 +972,7 @@ def create_sample_excel():
             'Anno': '2025'
         },
         {
-            'Data': '2025-04-29', 
+            'Data': '29-04-2025', 
             'Orario': '16:45-19:00',
             'Dipartimento': 'Scienze della Formazione',
             'Insegnamento comune': 'A018',
@@ -552,7 +1028,7 @@ def create_sample_excel():
         worksheet.write(len(df) + 3, 0, "• Le colonne con sfondo grigio sono obbligatorie")
         worksheet.write(len(df) + 4, 0, "• Il campo CFU deve essere un numero (es. 0.5)")
         worksheet.write(len(df) + 5, 0, "• I campi Giorno, Mese e Anno possono essere vuoti, verranno generati dalla Data")
-        worksheet.write(len(df) + 6, 0, "• La Data deve essere nel formato YYYY-MM-DD (es. 2025-04-28)")
+        worksheet.write(len(df) + 6, 0, "• La Data deve essere nel formato italiano DD-MM-YYYY (es. 28-04-2025)")
         worksheet.write(len(df) + 7, 0, "• L'Orario deve essere nel formato HH:MM-HH:MM (es. 14:30-16:45)")
         
         # Chiudi il writer per salvare il file
