@@ -956,8 +956,8 @@ def admin_interface(df: pd.DataFrame) -> pd.DataFrame:
         dipartimenti = sorted(df['Dipartimento'].dropna().unique())
         dipartimento_selected = st.multiselect("Dipartimento:", dipartimenti, key="admin_filter_dipartimento")
             
-        # Filtro per classe di concorso con funzionalità di ricerca testuale
-        st.markdown("##### Cerca per classe di concorso")
+        # Filtro per insegnamento comune con funzionalità di ricerca testuale
+        st.markdown("##### Cerca per insegnamento comune")
         insegnamento_comune_search = st.text_input("Cerca classe:", placeholder="Ad es.: A022, A023...", key="admin_filter_insegnamento_comune")
         
         st.markdown("---")

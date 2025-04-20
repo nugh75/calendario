@@ -81,7 +81,6 @@ def main():
                 'Data': 'Data',
                 'Orario': 'Orario',
                 'Dipartimento': 'Dipartimento',
-                'Classe di concorso': 'Classe di concorso', 
                 'Insegnamento comune': 'Insegnamento comune',
                 'Codice insegnamento': 'Codice insegnamento',
                 'Denominazione Insegnamento': 'Denominazione Insegnamento',
@@ -170,8 +169,8 @@ def main():
             docenti = sorted(df['Docente'].dropna().unique())
             docente_selected = st.sidebar.multiselect("Seleziona docente:", docenti)
             
-            # Filtro per classe di concorso con funzionalità di ricerca
-            st.sidebar.subheader("🎯 Cerca per classe di concorso")
+            # Filtro per insegnamento comune con funzionalità di ricerca
+            st.sidebar.subheader("🎯 Cerca per insegnamento comune")
             # Campo di ricerca testuale per insegnamento comune
             insegnamento_comune_search = st.sidebar.text_input("Cerca classe:", placeholder="Ad es.: A022, A023...")
             # Lista degli insegnamenti comuni disponibili

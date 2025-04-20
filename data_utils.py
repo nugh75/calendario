@@ -11,7 +11,7 @@ from date_utils import format_date
 
 # Costanti per le colonne
 BASE_COLUMNS = [
-    'Data', 'Orario', 'Dipartimento', 'Classe di concorso',
+    'Data', 'Orario', 'Dipartimento',
     'Insegnamento comune', 'PeF60 all.1', 'PeF30 all.2', 'PeF36 all.5', 'PeF30 art.13',
     'Codice insegnamento', 'Denominazione Insegnamento', 'Docente',
     'Aula', 'Link Teams', 'CFU', 'Note'
@@ -54,7 +54,6 @@ def create_new_record(df: pd.DataFrame) -> pd.DataFrame:
         new_date = st.date_input("Data", format="YYYY-MM-DD")
         new_orario = st.text_input("Orario (es. 14:30-16:45)")
         new_dipartimento = st.text_input("Dipartimento")
-        new_classe = st.text_input("Classe di concorso")
         new_insegnamento_comune = st.text_input("Insegnamento comune")
         
         # Opzioni per i campi PeF: valori ammissibili sono solo "D", "P" o "---"
@@ -95,7 +94,6 @@ def create_new_record(df: pd.DataFrame) -> pd.DataFrame:
             'Data': pd.to_datetime(new_date),
             'Orario': new_orario,
             'Dipartimento': new_dipartimento,
-            'Classe di concorso': new_classe,
             'Insegnamento comune': new_insegnamento_comune,
             'PeF60 all.1': new_pef60,
             'PeF30 all.2': new_pef30_all2,
@@ -193,7 +191,6 @@ def edit_record(df: pd.DataFrame, index: int) -> pd.DataFrame:
                                 format="YYYY-MM-DD")
         edit_orario = st.text_input("Orario", value=record['Orario'] if pd.notna(record['Orario']) else "")
         edit_dipartimento = st.text_input("Dipartimento", value=record['Dipartimento'] if pd.notna(record['Dipartimento']) else "")
-        edit_classe = st.text_input("Classe di concorso", value=record['Classe di concorso'] if pd.notna(record['Classe di concorso']) else "")
         edit_insegnamento_comune = st.text_input("Insegnamento comune", value=record['Insegnamento comune'] if pd.notna(record['Insegnamento comune']) else "")
         edit_pef60 = st.text_input("PeF60 all.1", value=record['PeF60 all.1'] if pd.notna(record['PeF60 all.1']) else "")
         edit_pef30_all2 = st.text_input("PeF30 all.2", value=record['PeF30 all.2'] if pd.notna(record['PeF30 all.2']) else "")
@@ -230,7 +227,6 @@ def edit_record(df: pd.DataFrame, index: int) -> pd.DataFrame:
             'Data': pd.to_datetime(edit_date),
             'Orario': edit_orario,
             'Dipartimento': edit_dipartimento,
-            'Classe di concorso': edit_classe,
             'Insegnamento comune': edit_insegnamento_comune,
             'PeF60 all.1': edit_pef60,
             'PeF30 all.2': edit_pef30_all2,

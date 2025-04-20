@@ -42,9 +42,6 @@ def edit_record(df: pd.DataFrame, index: int) -> pd.DataFrame:
             dipartimento_input = st.text_input(
                 "Dipartimento", value=record.get("Dipartimento", ""), key=f"dipartimento_{index}"
             )
-            classe_input = st.text_input(
-                "Classe di concorso", value=record.get("Classe di concorso", ""), key=f"classe_{index}"
-            )
             insegnamento_comune_input = st.text_input(
                 "Insegnamento comune", value=record.get("Insegnamento comune", ""), key=f"insegnamento_comune_{index}"
             )
@@ -106,7 +103,6 @@ def edit_record(df: pd.DataFrame, index: int) -> pd.DataFrame:
                 "Data": data_input,
                 "Orario": orario_input,
                 "Dipartimento": dipartimento_input,
-                "Classe di concorso": classe_input,
                 "Insegnamento comune": insegnamento_comune_input,
                 "PeF60 all.1": pef60_input,
                 "PeF30 all.2": pef30_all2_input,
