@@ -2,7 +2,7 @@ streamlit
 pandas
 openpyxl
 plotly
-# python-dotenv
+python-dotenv
 bcrypt
 xlsxwriter
 numpy
