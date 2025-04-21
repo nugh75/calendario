@@ -102,35 +102,52 @@ CLASSI_GRUPPO_B = [
 
 # Mappa per collegare le discipline alle aree formative
 MAPPA_DISCIPLINE_AREE = {
-    # Esempio: La chiave è parte del nome dell'insegnamento, il valore è l'area formativa
-    "didattiche discipline": "Disciplinare",
-    "metodologie discipline": "Disciplinare",
-    "area pedagogica": "Trasversale",
-    "formazione inclusiva": "Trasversale",
-    "inclusiva bes": "Trasversale",
-    "metodologie didattiche": "Trasversale",
-    "psico": "Trasversale",
-    "socio antropolog": "Trasversale",
-    "linguistico": "Trasversale",
-    "digitale": "Trasversale",
-    "legislazione": "Trasversale"
-    # Tirocini non ancora implementati nell'applicazione
-    # "tirocinio diretto": "Tirocinio Diretto",
-    # "tirocinio indiretto": "Tirocinio Indiretto"
+    # Tutte le discipline sono disciplinari a meno che non siano identificate come trasversali o tirocini
+    "tirocinio diretto": "Tirocinio Diretto",
+    "tirocinio indiretto": "Tirocinio Indiretto"
 }
 
 # Mappa per collegare le discipline alle subaree trasversali
 MAPPA_DISCIPLINE_SUBAREE = {
-    # Esempio: La chiave è parte del nome dell'insegnamento, il valore è la subarea trasversale
+    # AREA PEDAGOGICA
     "area pedagogica": "Area pedagogica",
-    "pedagogia": "Area pedagogica",
+    "pedagogia generale": "Area pedagogica",
+    "pedagogia interculturale": "Area pedagogica",
+    "storia della scuola": "Area pedagogica",
+    "istituzioni educative": "Area pedagogica",
+    "valutazione scolastica": "Area pedagogica",
+    
+    # FORMAZIONE INCLUSIVA PERSONE CON BES
     "formazione inclusiva": "Formazione inclusiva persone con BES",
     "inclusiva bes": "Formazione inclusiva persone con BES",
+    "didattica inclusiva": "Formazione inclusiva persone con BES",
+    
+    # METODOLOGIE DIDATTICHE
     "metodologie didattiche": "Metodologie didattiche",
+    "progettazione didattica": "Metodologie didattiche",
+    "metodologie innovative": "Metodologie didattiche",
+    
+    # DISCIPLINE PSICO-SOCIO-ANTROPOLOGICHE
+    "antropologia culturale": "Discipline psico-socio-antropologiche",
+    "psicologia dei processi": "Discipline psico-socio-antropologiche",
+    "processi cognitivi": "Discipline psico-socio-antropologiche",
+    "processi affettivi": "Discipline psico-socio-antropologiche",
+    "psicologia insegnamento": "Discipline psico-socio-antropologiche",
+    "psicologia apprendimento": "Discipline psico-socio-antropologiche",
+    "sociologia educazione": "Discipline psico-socio-antropologiche",
     "psico": "Discipline psico-socio-antropologiche",
     "socio antropolog": "Discipline psico-socio-antropologiche",
+    
+    # AREA LINGUISTICO-DIGITALE
+    "competenze informatiche": "Area linguistico-digitale",
+    "coding": "Area linguistico-digitale",
+    "educazione linguistica": "Area linguistico-digitale",
+    "tecnologie didattica digitale": "Area linguistico-digitale",
     "linguistico": "Area linguistico-digitale",
     "digitale": "Area linguistico-digitale",
+    
+    # LEGISLAZIONE SCOLASTICA
+    "legislazione scolastica": "Discipline relative alla legislazione scolastica",
     "legislazione": "Discipline relative alla legislazione scolastica"
 }
 
