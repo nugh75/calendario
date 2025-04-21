@@ -117,7 +117,7 @@ def mostra_riepilogo_cfu(df: pd.DataFrame):
     trasversali_df = stats_df[stats_df['Insegnamento comune'].isin(CLASSI_TRASVERSALI)]
     
     # Tabs per separare le visualizzazioni
-    tab1, tab2, tab3 = st.tabs(["Classi di Concorso", "Trasversali", "Dettaglio Completo"])
+    tab1, tab2 = st.tabs(["Classi di Concorso", "Trasversali"])
     
     # Tab 1: Riepilogo per Classi di Concorso
     with tab1:
@@ -152,22 +152,6 @@ def mostra_riepilogo_cfu(df: pd.DataFrame):
             _visualizza_grafico_cfu(cfu_trasversali)
         else:
             st.info("Nessun dato disponibile per classi trasversali")
-    
-    # Tab 3: Dettaglio completo
-    with tab3:
-        st.subheader("Dettaglio CFU per Classe e Percorso")
-        
-        # Permetti all'utente di selezionare una classe specifica
-        # Prepara la lista con tutte le classi di concorso presenti nei dati
-        classi_presenti = sorted(stats_df['Insegnamento comune'].unique())
-        classe_selezionata = st.selectbox("Seleziona una classe di concorso:", [""] + classi_presenti)
-        
-        if classe_selezionata:
-            # Filtra per la classe selezionata
-            classe_df = stats_df[stats_df['Insegnamento comune'] == classe_selezionata]
-            
-            # Mostra il riepilogo dettagliato per la classe selezionata
-            _mostra_dettaglio_classe(classe_df, classe_selezionata)
 
 
 def _genera_pivot_cfu_per_classe(df: pd.DataFrame) -> pd.DataFrame:
@@ -847,6 +831,42 @@ def mostra_riepilogo_cfu_per_area(df: pd.DataFrame):
     """
     st.subheader("📊 Analisi CFU per Aree Formative (DPCM 4 agosto 2023)")
     
+    # Aggiungi filtro per dipartimento
+    col1, col2 = st.columns([1, 2])
+    with col1:
+        if 'Dipartimento' in df.columns:
+            dipartimenti_list = ["Tutti"] + sorted(df['Dipartimento'].dropna().unique().tolist())
+            selected_dipartimento = st.selectbox("Filtro Dipartimento:", dipartimenti_list, key="dipartimento_area_formativa")
+            
+            # Salva il dataframe originale completo per le trasversali
+            df_completo = df.copy()
+            
+            # Applica filtro per dipartimento se selezionato
+            if selected_dipartimento != "Tutti":
+                # Estrai le classi trasversali prima di filtrare
+                from percorsi_formativi import CLASSI_TRASVERSALI
+                trasversali_df = df[df['Insegnamento comune'].isin(CLASSI_TRASVERSALI)]
+                
+                # Filtra il resto per dipartimento
+                df_filtrato_specifiche = df[~df['Insegnamento comune'].isin(CLASSI_TRASVERSALI)]
+                df_filtrato_specifiche = df_filtrato_specifiche[df_filtrato_specifiche['Dipartimento'] == selected_dipartimento]
+                
+                # Ricombina i dataframe
+                df_filtrato = pd.concat([df_filtrato_specifiche, trasversali_df])
+                
+                num_records = len(df_filtrato_specifiche)  # Contiamo solo le specifiche per l'informazione
+                st.info(f"📊 Visualizzando {num_records} record specifici del dipartimento {selected_dipartimento} (più insegnamenti trasversali)")
+            else:
+                df_filtrato = df
+                num_records = len(df)
+                st.info(f"📊 Visualizzando tutti i {num_records} record")
+        else:
+            df_filtrato = df
+            st.warning("⚠️ Campo 'Dipartimento' non presente nei dati")
+    
+    # Lavora con il dataframe filtrato da qui in avanti
+    df = df_filtrato
+    
     if df is None or df.empty:
         st.info("Nessun dato disponibile per l'analisi dei CFU per aree formative")
         return
@@ -894,7 +914,7 @@ def mostra_riepilogo_cfu_per_area(df: pd.DataFrame):
     classe_selezionata = st.selectbox(
         "Seleziona una classe di concorso:",
         opzioni,
-        index=0,
+        index=opzioni.index("A008") if "A008" in opzioni else 0,
         help="Per un'analisi accurata, seleziona una classe di concorso specifica"
     )
     
@@ -940,11 +960,21 @@ def mostra_riepilogo_cfu_per_area(df: pd.DataFrame):
     if classe_selezionata not in ["Tutte le classi", "--- Classi Specifiche ---", "--- Classi Trasversali ---"]:
         st.success(f"Analisi CFU per la classe: **{classe_selezionata}** (include anche le aree trasversali)")
     
+    # Crea una variabile di sessione per tenere traccia della tab selezionata
+    if "tab_selezionata" not in st.session_state:
+        st.session_state.tab_selezionata = "Panoramica"
+        
+    # Lista dei tab (percorsi formativi)
+    tab_names = ["Panoramica"] + list(PERCORSI_CFU.keys())
+    
     # Crea tabs per ogni percorso formativo (converte dict_keys in lista)
-    tabs = st.tabs(["Panoramica"] + list(PERCORSI_CFU.keys()))
+    tabs = st.tabs(tab_names)
     
     # Tab Panoramica: Quadro generale di tutti i CFU
     with tabs[0]:
+        # Aggiorna la tab selezionata
+        st.session_state.tab_selezionata = "Panoramica"
+        
         st.write("### Panoramica CFU per Aree Formative")
         
         # Calcola i CFU totali per area formativa usando il DataFrame filtrato
@@ -959,6 +989,9 @@ def mostra_riepilogo_cfu_per_area(df: pd.DataFrame):
     # Tab per ciascun percorso formativo
     for i, percorso in enumerate(PERCORSI_CFU.keys()):
         with tabs[i+1]:
+            # Aggiorna la tab selezionata quando l'utente clicca su un tab
+            st.session_state.tab_selezionata = percorso
+            
             st.write(f"### Analisi CFU - {percorso}")
             
             # Avviso informativo sui tirocini se stiamo visualizzando un percorso che li include
@@ -993,16 +1026,10 @@ def mostra_riepilogo_cfu_per_area(df: pd.DataFrame):
             aree_df = pd.DataFrame(aree_data)
             st.dataframe(aree_df, use_container_width=True, hide_index=True)
             
-            # Nota: Rimossa la visualizzazione delle Subaree Trasversali per semplificare l'interfaccia
-            
-            # Nota: Rimossa anche la sezione "Dettaglio CFU per Modalità" per semplificare ulteriormente l'interfaccia
-            
-            # Nota: Rimossa la sezione "Suggerimenti per risolvere le non conformità" per semplificare l'interfaccia
-                    
             # Visualizzazione informazioni sulla classe di concorso selezionata
             if classe_selezionata not in ["Tutte le classi", "--- Classi Specifiche ---", "--- Classi Trasversali ---"]:
                 with st.expander("📚 Dettagli CFU per la classe di concorso selezionata"):
-                    # Filtra solo i record della classe selezionata (escludendo le trasversali)
+                    # Filtra solo i record della classe selezionata
                     solo_classe_df = stats_df[stats_df['Insegnamento comune'] == classe_selezionata]
                     
                     # Calcola CFU totali per questa classe
@@ -1010,18 +1037,304 @@ def mostra_riepilogo_cfu_per_area(df: pd.DataFrame):
                     
                     # Visualizza informazioni sulla classe
                     st.write(f"**Classe di concorso:** {classe_selezionata}")
-                    st.write(f"**CFU totali specifici per questa classe:** {round(cfu_classe_totale, 1)}")
                     
-                    # Mostra il dettaglio degli insegnamenti per questa classe
+                    # Determina a quale gruppo trasversale appartiene la classe (A o B)
+                    from percorsi_formativi import CLASSI_GRUPPO_A, CLASSI_GRUPPO_B
+                    gruppo_trasversale = None
+                    if classe_selezionata in CLASSI_GRUPPO_A:
+                        gruppo_trasversale = "A"
+                        st.info(f"📌 Questa classe appartiene al gruppo A (Trasversale A)")
+                    elif classe_selezionata in CLASSI_GRUPPO_B:
+                        gruppo_trasversale = "B"
+                        st.info(f"📌 Questa classe appartiene al gruppo B (Trasversale B)")
+                    
+                    # Il filtro per percorsi formativi ora viene impostato automaticamente in base al tab selezionato
+                    percorsi_disponibili = ["Tutti"] + [p for p in PERCORSI if p in stats_df.columns]
+                    
+                    # Imposta il valore predefinito in base alla tab selezionata
+                    default_percorso_idx = 0  # Default: "Tutti"
+                    if st.session_state.tab_selezionata != "Panoramica" and st.session_state.tab_selezionata in percorsi_disponibili:
+                        default_percorso_idx = percorsi_disponibili.index(st.session_state.tab_selezionata)
+                    
+                    percorso_filtro = st.selectbox(
+                        "Filtra per percorso formativo:", 
+                        percorsi_disponibili,
+                        index=default_percorso_idx,
+                        key=f"filtro_percorso_{classe_selezionata}_{percorso}"
+                    )
+                    
+                    # Mostra il dettaglio degli insegnamenti per questa classe, includendo le trasversali
                     if not solo_classe_df.empty:
-                        st.write("**Insegnamenti specifici per questa classe:**")
+                        # Determina quali trasversali includere
+                        trasversali_da_includere = []
+                        if gruppo_trasversale == "A":
+                            trasversali_da_includere = ["Trasversale A"]
+                        elif gruppo_trasversale == "B":
+                            trasversali_da_includere = ["Trasversale B"]
                         
-                        # Crea un dataframe ridotto con le informazioni essenziali
-                        insegnamenti_df = solo_classe_df[['Denominazione Insegnamento', 'CFU_numeric', 'Area Formativa', 'Docente']]
-                        insegnamenti_df = insegnamenti_df.rename(columns={
+                        # Ottieni i dati delle trasversali appropriate
+                        trasversali_df = stats_df[stats_df['Insegnamento comune'].isin(trasversali_da_includere)]
+                        
+                        # Unisci i dataframe della classe specifica e delle trasversali
+                        insegnamenti_completi_df = pd.concat([solo_classe_df, trasversali_df])
+                        
+                        # Applica il filtro per percorso se selezionato
+                        if percorso_filtro != "Tutti" and percorso_filtro in insegnamenti_completi_df.columns:
+                            # Filtra solo le righe dove il percorso è 'P' o 'D' (esclude '---')
+                            insegnamenti_completi_df = insegnamenti_completi_df[
+                                insegnamenti_completi_df[percorso_filtro].isin(['P', 'D'])
+                            ]
+                            st.write(f"**Insegnamenti specifici e trasversali per questa classe (filtrati per {percorso_filtro}):**")
+                        else:
+                            st.write("**Insegnamenti specifici e trasversali per questa classe:**")
+                        
+                        # Definisci tutte le colonne disponibili con priorità
+                        available_cols = {
+                            # Colonne principali
+                            'Data': 'Data',
+                            'Orario': 'Orario',
+                            'Docente': 'Docente',
+                            'Insegnamento comune': 'Classe',
                             'Denominazione Insegnamento': 'Insegnamento',
-                            'CFU_numeric': 'CFU'
-                        })
+                            'CFU_numeric': 'CFU',
+                            'Area Formativa': 'Area Formativa',
+                            # Colonne logistiche
+                            'Aula': 'Aula',
+                            'Link Teams': 'Link Teams',
+                            'Codice Insegnamento': 'Codice Insegnamento',
+                            # Altre colonne se presenti
+                            'Dipartimento': 'Dipartimento',
+                            'Tipo': 'Tipo',
+                            'Note': 'Note'
+                        }
+                        
+                        # Verifica quali colonne sono effettivamente disponibili nel dataframe
+                        actual_available_cols = {}
+                        for k, v in available_cols.items():
+                            if k in insegnamenti_completi_df.columns:
+                                actual_available_cols[k] = v
+                        
+                        # Raggruppa le colonne per categoria per una migliore organizzazione dell'interfaccia
+                        colonne_principali = ['Data', 'Orario', 'Insegnamento comune', 'Denominazione Insegnamento', 'CFU_numeric', 'Docente']
+                        colonne_logistiche = ['Aula', 'Link Teams', 'Codice Insegnamento']
+                        colonne_dettaglio = ['Area Formativa', 'Dipartimento', 'Tipo', 'Note']
+                        
+                        # Colonne predefinite da mostrare (priorità a quelle principali e logistiche)
+                        default_cols = []
+                        # Aggiungi colonne principali se disponibili
+                        for col in colonne_principali:
+                            if col in insegnamenti_completi_df.columns:
+                                default_cols.append(col)
+                        # Aggiungi colonne logistiche se disponibili
+                        for col in colonne_logistiche:
+                            if col in insegnamenti_completi_df.columns:
+                                default_cols.append(col)
+                        # Aggiungi Area Formativa se disponibile
+                        if 'Area Formativa' in insegnamenti_completi_df.columns:
+                            default_cols.append('Area Formativa')
+                        
+                        # Crea una chiave univoca basata solo sulla classe e il percorso (più stabile)
+                        stable_key = f"col_select_{classe_selezionata}_{percorso}"
+                        
+                        # Crea un layout con 3 colonne
+                        col1, col2, col3 = st.columns([1, 2, 1])
+                        
+                        with col1:
+                            st.write("Seleziona colonne:")
+                            
+                        with col3:
+                            # Pulsante per resettare le colonne
+                            if st.button("Reset colonne", key=f"btn_reset_{stable_key}"):
+                                if stable_key in st.session_state:
+                                    del st.session_state[stable_key]
+                                st.rerun()  # Forza il refresh della pagina
+                                
+                        # Dizionario per mappare nomi visualizzati alle chiavi originali
+                        col_mapping = {}
+                        for k, v in actual_available_cols.items():
+                            col_mapping[v] = k
+                            
+                        # Ottieni le opzioni disponibili per categorie
+                        options_principali = [actual_available_cols[col] for col in colonne_principali if col in actual_available_cols]
+                        options_logistiche = [actual_available_cols[col] for col in colonne_logistiche if col in actual_available_cols]
+                        options_dettaglio = [actual_available_cols[col] for col in colonne_dettaglio if col in actual_available_cols]
+                        
+                        # Tutte le opzioni disponibili per il multiselect
+                        all_options = options_principali + options_logistiche + options_dettaglio
+                        
+                        # Valori predefiniti
+                        default_values = [actual_available_cols[col] for col in default_cols if col in actual_available_cols]
+                        
+                        with col2:
+                            # Usa st.multiselect con una chiave stabile e salva la selezione nella session_state
+                            selected_col_names = st.multiselect(
+                                "Colonne da visualizzare", 
+                                all_options,
+                                default=default_values if stable_key not in st.session_state else st.session_state[stable_key],
+                                key=stable_key
+                            )
+                        
+                        # Gestione più robusta della selezione delle colonne
+                        try:
+                            # Converti i nomi visualizzati nelle chiavi originali usando il dizionario di mappatura
+                            if not selected_col_names:
+                                # Se non ci sono colonne selezionate, usa quelle predefinite
+                                selected_cols = default_cols
+                                st.warning("Nessuna colonna selezionata, utilizzo le colonne predefinite")
+                            else:
+                                # Mappa i nomi selezionati alle chiavi del dataframe
+                                selected_cols = [col_mapping[name] for name in selected_col_names if name in col_mapping]
+                                
+                                # Se la conversione fallisce, usa le colonne predefinite
+                                if not selected_cols:
+                                    selected_cols = default_cols
+                                    st.warning("Problema nella selezione delle colonne, utilizzo le colonne predefinite")
+                        except Exception as e:
+                            # In caso di errore, usa le colonne predefinite
+                            st.error(f"Errore durante la gestione delle colonne: {str(e)}")
+                            selected_cols = default_cols
+                        
+                        # Verifica che tutte le colonne selezionate esistano nel dataframe
+                        valid_cols = [col for col in selected_cols if col in insegnamenti_completi_df.columns]
+                        
+                        # Aggiungi la colonna del percorso selezionato se applicabile
+                        percorso_col = []
+                        if percorso_filtro != "Tutti" and percorso_filtro in insegnamenti_completi_df.columns:
+                            percorso_col = [percorso_filtro]
+                        
+                        # Definisci le colonne finali da visualizzare
+                        final_cols = valid_cols + percorso_col
+                        
+                        # Verifica che ci siano colonne valide da visualizzare
+                        if not final_cols:
+                            st.warning("Nessuna colonna valida selezionata. Ripristino le colonne predefinite.")
+                            final_cols = [col for col in default_cols if col in insegnamenti_completi_df.columns]
+                            if percorso_col:
+                                final_cols += percorso_col
+                        
+                        # Crea il dataframe da visualizzare
+                        insegnamenti_df = insegnamenti_completi_df[final_cols].copy()
+                        
+                        # Formatta la data se è un oggetto datetime
+                        if 'Data' in insegnamenti_df.columns and hasattr(insegnamenti_df['Data'], 'dt'):
+                            insegnamenti_df['Data'] = insegnamenti_df['Data'].dt.strftime('%d/%m/%Y')
+                            
+                        # Rinomina le colonne per una migliore leggibilità
+                        renamed_cols = {k: v for k, v in available_cols.items() if k in selected_cols}
+                        # Aggiungi anche il rename per il percorso se presente
+                        if percorso_filtro != "Tutti" and percorso_filtro in insegnamenti_completi_df.columns:
+                            renamed_cols[percorso_filtro] = 'Modalità'
+                            
+                        insegnamenti_df = insegnamenti_df.rename(columns=renamed_cols)
+                        
+                        # Ordina per data e orario
+                        if 'Data' in insegnamenti_df.columns and 'Orario' in insegnamenti_df.columns:
+                            insegnamenti_df = insegnamenti_df.sort_values(['Data', 'Orario'])
                         
                         # Visualizza la tabella
                         st.dataframe(insegnamenti_df, use_container_width=True, hide_index=True)
+                        
+                        # Aggiungi opzione per scaricare l'elenco delle lezioni
+                        percorso_nome = percorso_filtro if percorso_filtro != "Tutti" else "tutti_percorsi"
+                        st.download_button(
+                            label="📄 Scarica elenco lezioni",
+                            data=insegnamenti_df.to_csv(index=False),
+                            file_name=f"lezioni_{classe_selezionata}_{percorso_nome}_{pd.Timestamp.now().strftime('%Y%m%d_%H%M')}.csv",
+                            mime="text/csv",
+                            key=f"download_dettaglio_classe_{classe_selezionata}_{percorso}_{id(insegnamenti_df)}"
+                        )
+                    else:
+                        st.warning("⚠️ Nessun insegnamento trovato per questa classe nel periodo selezionato.")
+    return
+
+def mostra_riepilogo_cfu_per_percorso(df: pd.DataFrame):
+    """
+    Mostra un riepilogo dei CFU per percorso formativo (PeF60, PeF30, ecc.)
+    secondo le specifiche del DPCM 4 agosto 2023.
+    
+    Args:
+        df: DataFrame con i dati delle lezioni
+    """
+    st.subheader("📊 Analisi CFU per Percorsi Formativi (DPCM 4 agosto 2023)")
+    
+    if df is None or df.empty:
+        st.info("Nessun dato disponibile per l'analisi dei CFU per percorsi formativi")
+        return
+    
+    # Prepara i dati
+    stats_df = df.copy()
+    
+    # Pulisci e standardizza i valori dei CFU
+    stats_df['CFU_clean'] = stats_df['CFU'].astype(str).str.replace(',', '.')
+    stats_df['CFU_clean'] = stats_df['CFU_clean'].replace('nan', '0')
+    stats_df['CFU_numeric'] = pd.to_numeric(stats_df['CFU_clean'], errors='coerce').fillna(0)
+    
+    # Rimuovi i duplicati per avere conteggi accurati
+    stats_df = stats_df.drop_duplicates(subset=['Data', 'Orario', 'Docente', 'Denominazione Insegnamento'])
+    
+    # Espandi le classi multiple invece di filtrarle
+    # In questo modo i CFU dei record con classi combinate vengono assegnati a ciascuna classe individuale
+    stats_df = _espandi_classi_multiple(stats_df)
+    
+    # Classifica gli insegnamenti per area formativa
+    stats_df = _classifica_insegnamenti_per_area(stats_df)
+    
+    # Crea tabs per ogni percorso formativo (converte dict_keys in lista)
+    tabs = st.tabs(["Panoramica"] + list(PERCORSI_CFU.keys()))
+    
+    # Tab Panoramica: Quadro generale di tutti i CFU
+    with tabs[0]:
+        st.write("### Panoramica CFU per Aree Formative")
+        
+        # Calcola i CFU totali per area formativa usando il DataFrame filtrato
+        pivot_area, pivot_subarea = _calcola_cfu_per_area(stats_df)
+        
+        # Visualizza i CFU totali per area formativa
+        st.write("#### CFU per Area Formativa")
+        st.dataframe(pivot_area, use_container_width=True)
+        
+        # Nota: Rimossa la tabella CFU per Subarea Trasversale perché non necessaria
+    
+    # Tab per ciascun percorso formativo
+    for i, percorso in enumerate(PERCORSI_CFU.keys()):
+        with tabs[i+1]:
+            st.write(f"### Analisi CFU - {percorso}")
+            
+            # Avviso informativo sui tirocini se stiamo visualizzando un percorso che li include
+            requisiti_percorso = PERCORSI_CFU[percorso]
+            if requisiti_percorso.get("Tirocinio Diretto", 0) > 0 or requisiti_percorso.get("Tirocinio Indiretto", 0) > 0:
+                st.info("ℹ️ Le aree di tirocinio sono previste nel DPCM ma non ancora implementate nell'applicazione.")
+            
+            # Verifica la conformità del percorso usando il DataFrame filtrato
+            conformita = _verifica_conformita_percorso(stats_df, percorso)
+            
+            # Mostra stato generale di conformità
+            if conformita['conforme']:
+                st.success(f"✅ Il percorso {percorso} è conforme ai requisiti del DPCM 4 agosto 2023")
+            else:
+                st.error(f"❌ Il percorso {percorso} NON è conforme ai requisiti del DPCM 4 agosto 2023")
+            
+            # Mostra solo le aree formative principali (rimossa la visualizzazione delle subaree)
+            st.write("#### CFU per Area Formativa")
+            
+            # Crea dataframe per visualizzazione
+            aree_data = []
+            for area, dati in conformita['aree'].items():
+                stato = "✅" if dati['conforme'] else "❌"
+                aree_data.append({
+                    "Area": area,
+                    "CFU Erogati": dati['erogati'],
+                    "CFU Richiesti": dati['richiesti'],
+                    "Differenza": dati['differenza'],
+                    "Stato": stato
+                })
+            
+            aree_df = pd.DataFrame(aree_data)
+            st.dataframe(aree_df, use_container_width=True, hide_index=True)
+            
+            # Nota: Rimossa la visualizzazione delle Subaree Trasversali per semplificare l'interfaccia
+            
+            # Nota: Rimossa anche la sezione "Dettaglio CFU per Modalità" per semplificare ulteriormente l'interfaccia
+            
+            # Nota: Rimossa la sezione "Suggerimenti per risolvere le non conformità" per semplificare l'interfaccia
+    return

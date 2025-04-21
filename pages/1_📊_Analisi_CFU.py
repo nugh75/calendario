@@ -1,7 +1,7 @@
 """
-Pagina di riepilogo CFU per classi di concorso e percorsi formativi.
-Questa pagina mostra statistiche dettagliate sui CFU erogati per ciascuna classe di concorso
-e per i diversi percorsi formativi (PeF60, PeF30, ecc.).
+Pagina di analisi dettagliata dei CFU per classi di concorso e percorsi formativi.
+Questa pagina mostra statistiche analitiche sui CFU erogati per ciascuna classe di concorso
+e per i diversi percorsi formativi (PeF60, PeF30, ecc.), con visualizzazioni per aree formative.
 """
 
 import streamlit as st
@@ -15,6 +15,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 # Importa le funzioni necessarie
 from admin_utils import is_admin_logged_in, login_admin, logout_admin
 from file_utils import load_data
+from pages_visibility import hide_protected_pages, show_protected_pages
 
 # Importazione diretta del modulo cfu_riepilogo_utils
 try:
@@ -37,33 +38,16 @@ st.set_page_config(
     layout="wide"
 )
 
-# Titolo della pagina
-st.title("📊 Riepilogo CFU per Classi di Concorso e Percorsi")
-
-# Verifica se l'utente è loggato come amministratore
-if not is_admin_logged_in():
-    st.warning("🔒 Questa pagina è protetta da password")
-    
-    # Form di login
-    with st.form("login_form_riepilogo"):
-        password = st.text_input("Password", type="password")
-        submit_button = st.form_submit_button("Accedi")
-        
-        if submit_button:
-            if login_admin(password):
-                st.success("✅ Accesso effettuato con successo!")
-                st.rerun()
-            else:
-                st.error("❌ Password errata")
-    
-    # Interrompi l'esecuzione se l'utente non è loggato
-    st.info("Questa sezione è riservata agli amministratori.")
-    st.stop()
+# Gestione della visibilità delle pagine protette
+if is_admin_logged_in():
+    show_protected_pages()
 else:
-    # Logout button nella sidebar
-    if st.sidebar.button("🚪 Logout"):
-        logout_admin()
-        st.rerun()
+    hide_protected_pages()
+
+# Titolo della pagina
+st.title("📊 Analisi CFU per Classi di Concorso e Percorsi")
+
+# Carica i dati
 
 # Carica i dati
 df = load_data()
@@ -149,6 +133,32 @@ with tab2:
     
     # Mostra il riepilogo per area formativa
     mostra_riepilogo_cfu_per_area(filtered_df)
+
+# Aggiungi Area Amministratore in basso nella sidebar
+st.sidebar.markdown("---")
+st.sidebar.markdown("### 🔐 Area Amministratore")
+
+# Mostra il pulsante di login o logout in base allo stato di autenticazione
+with st.sidebar:
+    if not is_admin_logged_in():
+        with st.sidebar.expander("Accedi come amministratore"):
+            password = st.text_input("Password", type="password", key="password_analisi")
+            if st.button("Accedi", key="login_analisi"):
+                if login_admin(password):
+                    st.success("✅ Accesso effettuato con successo!")
+                    # Aggiorna la visibilità delle pagine
+                    show_protected_pages()
+                    st.rerun()
+                else:
+                    st.error("❌ Password errata")
+    else:
+        st.sidebar.success("✅ Accesso effettuato come amministratore")
+        if st.sidebar.button("🚪 Logout", key="logout_analisi"):
+            # Prima nascondi le pagine protette
+            hide_protected_pages()
+            # Poi esegui il logout
+            logout_admin()
+            st.rerun()
 
 # Aggiungi riferimento alla dashboard nella parte inferiore
 st.sidebar.markdown("---")

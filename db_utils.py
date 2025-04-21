@@ -417,6 +417,127 @@ def save_record(record_data: Dict) -> bool:
             conn.close()
         return False
 
+def update_record(record_data: dict) -> bool:
+    """
+    Aggiorna un record esistente nel database SQLite.
+    
+    Args:
+        record_data: Dizionario contenente i dati del record da aggiornare
+        
+    Returns:
+        bool: True se l'aggiornamento è riuscito, False altrimenti
+    """
+    try:
+        # Valida i dati prima di procedere
+        try:
+            is_valid, message = validate_record_schema(record_data)
+            if not is_valid:
+                logger.error(f"Dati non validi per l'aggiornamento: {message}")
+                return False
+        except Exception as validation_err:
+            logger.warning(f"Errore durante la validazione del record: {str(validation_err)}")
+            # Continua comunque con l'aggiornamento
+        
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        # Ottieni o crea il dipartimento
+        dipartimento = record_data.get('Dipartimento', '')
+        if dipartimento:
+            dipartimento_id = get_or_create_dipartimento(dipartimento)
+        else:
+            dipartimento_id = None
+        
+        # Ottieni o crea il docente
+        docente = record_data.get('Docente', '')
+        if docente:
+            docente_id = get_or_create_docente(docente, dipartimento_id)
+        else:
+            docente_id = None
+            
+        # Prepara i dati della data
+        if pd.isna(record_data.get('Data')):
+            logger.error("Impossibile aggiornare un record senza data")
+            return False
+            
+        data_str = pd.to_datetime(record_data.get('Data')).strftime('%Y-%m-%d')
+        orario = record_data.get('Orario', '')
+        insegnamento_comune = record_data.get('Insegnamento comune', '')
+        denominazione = record_data.get('Denominazione Insegnamento', '')
+        
+        # Trova l'ID del record da aggiornare
+        cursor.execute('''
+            SELECT id FROM lezioni 
+            WHERE data = ? AND orario = ? AND docente_id = ? AND denominazione_insegnamento = ?
+        ''', (data_str, orario, docente_id, denominazione))
+        
+        existing_id = cursor.fetchone()
+        
+        if not existing_id:
+            logger.warning(f"Nessun record trovato da aggiornare con: data={data_str}, orario={orario}, docente={docente}, insegnamento={denominazione}")
+            conn.close()
+            return False
+            
+        # Aggiorna il record esistente
+        record_id = existing_id[0]
+        cursor.execute('''
+            UPDATE lezioni SET
+            dipartimento_id = ?,
+            classe_concorso = ?,
+            insegnamento_comune = ?,
+            pef60 = ?,
+            pef30_all2 = ?,
+            pef36_all5 = ?,
+            pef30_art13 = ?,
+            codice_insegnamento = ?,
+            denominazione_insegnamento = ?,
+            aula = ?,
+            link_teams = ?,
+            cfu = ?,
+            note = ?,
+            giorno = ?,
+            mese = ?,
+            anno = ?
+            WHERE id = ?
+        ''', (
+            dipartimento_id,
+            record_data.get('Classe di concorso', ''),
+            record_data.get('Insegnamento comune', ''),
+            record_data.get('PeF60 all.1', ''),
+            record_data.get('PeF30 all.2', ''),
+            record_data.get('PeF36 all.5', ''),
+            record_data.get('PeF30 art.13', ''),
+            record_data.get('Codice insegnamento', ''),
+            record_data.get('Denominazione Insegnamento', ''),
+            record_data.get('Aula', ''),
+            record_data.get('Link Teams', ''),
+            record_data.get('CFU', 0),
+            record_data.get('Note', ''),
+            record_data.get('Giorno', ''),
+            record_data.get('Mese', ''),
+            record_data.get('Anno', ''),
+            record_id
+        ))
+        
+        rows_updated = cursor.rowcount
+        conn.commit()
+        conn.close()
+        
+        if rows_updated > 0:
+            logger.info(f"Record aggiornato con successo: ID={record_id}")
+            return True
+        else:
+            logger.warning(f"Nessuna modifica effettiva apportata al record: ID={record_id}")
+            return False
+        
+    except Exception as e:
+        logger.error(f"Errore nell'aggiornamento del record: {str(e)}")
+        logger.error(traceback.format_exc())
+        if 'conn' in locals() and conn:
+            conn.rollback()
+            conn.close()
+        return False
+
 def delete_record(criteria: Dict) -> bool:
     """
     Elimina un record dal database in base ai criteri specificati.

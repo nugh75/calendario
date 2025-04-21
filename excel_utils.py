@@ -323,12 +323,19 @@ def process_excel_upload(uploaded_file, debug_container=None) -> pd.DataFrame:
         df = new_df
         
         # Verifica le colonne essenziali per la validità dei dati
-        missing_essential = [col for col in ['Data', 'Orario', 'Docente', 'Denominazione Insegnamento'] if col not in column_mapping]
+        essential_columns_required = ['Data', 'Orario', 'Docente', 'Denominazione Insegnamento']
+        missing_essential = [col for col in essential_columns_required if col not in column_mapping]
         if missing_essential:
             progress_bar.empty()
             status_text.empty()
             st.error(f"⚠️ Importazione fallita: Mancano colonne essenziali: {', '.join(missing_essential)}")
             st.info("Scarica il template per vedere la struttura corretta delle colonne.")
+            # Registra anche questo errore nei log
+            try:
+                from log_utils import logger
+                logger.error(f"Importazione fallita: Mancano colonne essenziali: {missing_essential}")
+            except ImportError:
+                pass
             return None
         
         # Mostra un riepilogo della mappatura all'utente con feedback migliorato

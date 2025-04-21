@@ -10,9 +10,139 @@ from typing import Dict, List, Tuple, Optional, Union
 import difflib
 import numpy as np
 import os
+import re
 from log_utils import logger
 from merge_utils import merge_duplicati, applica_merge, scegli_valori_per_merge, merge_con_selezione
 from cfu_riepilogo_utils import _filtra_classi_multiple
+
+def normalizza_stringa(testo: str) -> str:
+    """
+    Normalizza una stringa rimuovendo spazi in eccesso all'inizio, alla fine e tra parole.
+    
+    Args:
+        testo: Testo da normalizzare
+        
+    Returns:
+        str: Stringa normalizzata
+    """
+    if not isinstance(testo, str):
+        # Se non è una stringa, converti e poi normalizza
+        testo = str(testo) if pd.notna(testo) else ""
+    
+    # Rimuovi spazi all'inizio e alla fine
+    testo = testo.strip()
+    # Sostituisci più spazi consecutivi con uno solo
+    testo = re.sub(r'\s+', ' ', testo)
+    return testo
+
+def separa_nome_cognome(nome_completo: str) -> Tuple[List[str], List[str]]:
+    """
+    Separa un nome completo in possibili nomi e cognomi.
+    
+    Args:
+        nome_completo: Stringa contenente il nome completo (es. "Mario Rossi" o "Rossi Mario")
+        
+    Returns:
+        Tuple[List[str], List[str]]: Tuple contenente le liste di possibili nomi e cognomi
+    """
+    # Pulisci e standardizza la stringa
+    nome_completo = nome_completo.strip()
+    # Rimuovi titoli comuni
+    nome_completo = re.sub(r'(Prof\.|Dott\.|Dr\.|Ing\.|Arch\.|Avv\.)\s*', '', nome_completo, flags=re.IGNORECASE)
+    
+    # Dividi in parole
+    parole = nome_completo.split()
+    
+    # Se c'è una sola parola, è probabilmente un cognome
+    if len(parole) == 1:
+        return ([], parole)
+    
+    # Se ci sono due parole, potrebbero essere nome e cognome in qualsiasi ordine
+    if len(parole) == 2:
+        return ([parole[0]], [parole[1]])
+    
+    # Se ci sono più di due parole, consideriamo diverse possibilità
+    # Caso più comune in Italia: Nome [Secondo nome] Cognome
+    nomi = parole[:-1]
+    cognomi = [parole[-1]]
+    
+    return (nomi, cognomi)
+
+def errore_ortografico_possibile(parola1: str, parola2: str, soglia: float = 0.8) -> bool:
+    """
+    Verifica se due parole potrebbero contenere errori ortografici l'una rispetto all'altra.
+    
+    Args:
+        parola1: Prima parola
+        parola2: Seconda parola
+        soglia: Soglia di similitudine (0-1) per considerare le parole simili
+        
+    Returns:
+        bool: True se le parole sono sufficientemente simili da suggerire un errore ortografico
+    """
+    # Se sono identiche, non c'è errore ortografico
+    if parola1 == parola2:
+        return False
+    
+    # Se una delle due è vuota, non possiamo confrontare
+    if not parola1 or not parola2:
+        return False
+    
+    # Calcola la distanza di Levenshtein normalizzata
+    similarity = difflib.SequenceMatcher(None, parola1.lower(), parola2.lower()).ratio()
+    
+    # Se la similitudine è alta ma non sono identiche, potrebbe essere un errore ortografico
+    return similarity >= soglia and similarity < 1.0
+
+def sono_stesso_docente(docente1: str, docente2: str) -> bool:
+    """
+    Verifica se due stringhe di docenti potrebbero rappresentare la stessa persona con nome e cognome invertiti.
+    
+    Args:
+        docente1: Primo nome docente
+        docente2: Secondo nome docente
+        
+    Returns:
+        bool: True se potrebbero essere la stessa persona, False altrimenti
+    """
+    # Se sono identici, sono ovviamente la stessa persona
+    if docente1 == docente2:
+        return True
+    
+    # Se uno è vuoto, non sono la stessa persona
+    if not docente1 or not docente2:
+        return False
+    
+    # Pulisci e standardizza le stringhe
+    docente1 = docente1.strip().lower()
+    docente2 = docente2.strip().lower()
+    
+    # Separa i possibili nomi e cognomi
+    nomi1, cognomi1 = separa_nome_cognome(docente1)
+    nomi2, cognomi2 = separa_nome_cognome(docente2)
+    
+    # Se uno dei nomi o cognomi è vuoto, non possiamo verificare l'inversione
+    if not nomi1 or not cognomi1 or not nomi2 or not cognomi2:
+        return False
+    
+    # Verifica se c'è corrispondenza incrociata (nome1 = cognome2 e cognome1 = nome2)
+    for nome1 in nomi1:
+        for cognome1 in cognomi1:
+            for nome2 in nomi2:
+                for cognome2 in cognomi2:
+                    if (nome1.lower() == cognome2.lower() and cognome1.lower() == nome2.lower()):
+                        return True
+    
+    # Verifica anche la somiglianza dei nomi/cognomi per gestire piccoli errori di battitura
+    for nome1 in nomi1:
+        for cognome2 in cognomi2:
+            if difflib.SequenceMatcher(None, nome1.lower(), cognome2.lower()).ratio() > 0.8:
+                for cognome1 in cognomi1:
+                    for nome2 in nomi2:
+                        if difflib.SequenceMatcher(None, cognome1.lower(), nome2.lower()).ratio() > 0.8:
+                            return True
+    
+    return False
 
 def trova_potenziali_duplicati(df: pd.DataFrame, metodo: str = 'standard') -> Dict[str, pd.DataFrame]:
     """
@@ -44,8 +174,12 @@ def trova_potenziali_duplicati(df: pd.DataFrame, metodo: str = 'standard') -> Di
     
     if metodo in ['standard', 'completo']:
         # METODO STANDARD: stessa Data, Docente e Orario
-        # Crea una chiave di raggruppamento
-        working_df['gruppo_key'] = working_df['Data_str'] + '|' + working_df['Docente'].astype(str) + '|' + working_df['Orario'].astype(str)
+        # Normalizza i campi per rimuovere spazi in eccesso e creare una chiave di raggruppamento
+        working_df['Docente_norm'] = working_df['Docente'].apply(lambda x: normalizza_stringa(x))
+        working_df['Orario_norm'] = working_df['Orario'].apply(lambda x: normalizza_stringa(x))
+        
+        # Crea una chiave di raggruppamento con i valori normalizzati
+        working_df['gruppo_key'] = working_df['Data_str'] + '|' + working_df['Docente_norm'] + '|' + working_df['Orario_norm']
         
         # Trova gruppi con più di un record
         gruppi = working_df.groupby('gruppo_key')
@@ -53,55 +187,161 @@ def trova_potenziali_duplicati(df: pd.DataFrame, metodo: str = 'standard') -> Di
         
         # Aggiungi un prefisso al gruppo key per identificare il metodo
         gruppi_duplicati.update({f"standard|{k}": g for k, g in gruppi_duplicati_standard.items()})
+        
+        # Cerca anche record che differiscono solo per spazi extra
+        # Creiamo un altro gruppo dove cerchiamo record unici che hanno campi identici dopo la normalizzazione
+        # ma che erano diversi prima della normalizzazione
+        spazi_extra = []
+        for _, gruppo in gruppi_duplicati_standard.items():
+            # Per ogni gruppo, verifichiamo se i campi originali differivano solo per spazi
+            docenti_orig = gruppo['Docente'].astype(str).tolist()
+            docenti_norm = gruppo['Docente_norm'].tolist()
+            orari_orig = gruppo['Orario'].astype(str).tolist()
+            orari_norm = gruppo['Orario_norm'].tolist()
+            
+            # Se alcuni valori originali sono diversi ma quelli normalizzati sono uguali,
+            # abbiamo trovato differenze dovute solo a spazi
+            if len(set(docenti_orig)) > len(set(docenti_norm)) or len(set(orari_orig)) > len(set(orari_norm)):
+                for i in range(len(gruppo)):
+                    row = gruppo.iloc[i]
+                    # Marca questo record come avente spazi extra
+                    spazi_extra.append((row.name, "Trovati spazi extra nei campi"))
     
     if metodo in ['avanzato', 'completo']:
         # METODO AVANZATO: cerca anche piccole differenze
         # Questo metodo identifica duplicati potenziali anche quando ci sono piccole differenze
         
-        # 1. Raggruppamento per Docente e per vicinanza di Date (±3 giorni)
-        # Per ogni docente, raggruppiamo le lezioni e cerchiamo date vicine
-        for docente, gruppo_docente in working_df.groupby('Docente'):
-            if len(gruppo_docente) < 2:  # Serve almeno 2 record per un duplicato
+        # 1. Controllo errori ortografici nei nomi dei docenti
+        # Questo controllo identifica errori di battitura o variazioni ortografiche nei nomi
+        docenti_list = sorted(working_df['Docente'].dropna().unique())
+        
+        for i in range(len(docenti_list)):
+            for j in range(i + 1, len(docenti_list)):
+                docente1 = docenti_list[i]
+                docente2 = docenti_list[j]
+                
+                # Salta se sono identici
+                if docente1 == docente2:
+                    continue
+                
+                # Separa nomi e cognomi
+                nomi1, cognomi1 = separa_nome_cognome(docente1)
+                nomi2, cognomi2 = separa_nome_cognome(docente2)
+                
+                # Verifica errori ortografici nei cognomi
+                errore_trovato = False
+                
+                # Controlla se i cognomi sono simili (possibile errore ortografico)
+                for cognome1 in cognomi1:
+                    for cognome2 in cognomi2:
+                        # Verifica se i cognomi sono ortograficamente simili
+                        if errore_ortografico_possibile(cognome1, cognome2, 0.75):
+                            errore_trovato = True
+                            
+                            # Verifica anche se i nomi sono identici o molto simili per confermare
+                            nomi_simili = False
+                            if nomi1 and nomi2:  # Se entrambi hanno nomi
+                                for nome1 in nomi1:
+                                    for nome2 in nomi2:
+                                        if nome1.lower() == nome2.lower() or errore_ortografico_possibile(nome1, nome2, 0.9):
+                                            nomi_simili = True
+                                            break
+                                    if nomi_simili:
+                                        break
+                            
+                            # Se troviamo cognomi simili e nomi simili, probabile stesso docente con errore ortografico
+                            if nomi_simili or not (nomi1 and nomi2):  # Se i nomi sono simili o uno dei due non ha nomi
+                                # Ottieni tutti i record per entrambi i docenti
+                                records1 = working_df[working_df['Docente'] == docente1]
+                                records2 = working_df[working_df['Docente'] == docente2]
+                                
+                                # Per ogni combinazione di record, verifica se potrebbero essere duplicati
+                                for _, rec1 in records1.iterrows():
+                                    for _, rec2 in records2.iterrows():
+                                        # Verifica se i record sono per lezioni simili
+                                        if 'Denominazione Insegnamento' in rec1 and 'Denominazione Insegnamento' in rec2:
+                                            insegnamento1 = str(rec1['Denominazione Insegnamento']).lower()
+                                            insegnamento2 = str(rec2['Denominazione Insegnamento']).lower()
+                                            
+                                            # Calcola similarità degli insegnamenti
+                                            sim_insegnamento = difflib.SequenceMatcher(None, insegnamento1, insegnamento2).ratio()
+                                            
+                                            # Se gli insegnamenti sono simili, potrebbe essere un duplicato con errore nel nome
+                                            if sim_insegnamento > 0.6:
+                                                # Crea un gruppo di duplicati per questo caso
+                                                gruppo_key = f"avanzato|errore_ortografico|{docente1}~{docente2}"
+                                                
+                                                # Crea un DataFrame con i due record
+                                                duplicati_df = pd.DataFrame([rec1, rec2])
+                                                
+                                                # Aggiungi al dizionario dei gruppi (solo se non è già presente)
+                                                if gruppo_key not in gruppi_duplicati:
+                                                    gruppi_duplicati[gruppo_key] = duplicati_df
+                                                else:
+                                                    # Aggiungi il record se non è già presente nel gruppo
+                                                    gruppi_duplicati[gruppo_key] = pd.concat([gruppi_duplicati[gruppo_key], duplicati_df]).drop_duplicates()
+        
+        # 2. Controllo nomi docenti invertiti (nome-cognome vs cognome-nome)
+        # Questo controllo identifica i duplicati dove il nome e il cognome del docente sono stati invertiti
+        docenti_records = {}  # Dizionario per memorizzare i record per ogni docente
+        
+        # Popola il dizionario con i record per ogni docente
+        for idx, row in working_df.iterrows():
+            docente = str(row['Docente']).strip() if pd.notna(row['Docente']) else ""
+            if docente == "":
                 continue
                 
-            # Convertire le date in timestamp per confronto numerico
-            if hasattr(gruppo_docente['Data'], 'dt'):
-                gruppo_docente = gruppo_docente.copy()
-                gruppo_docente['data_ts'] = gruppo_docente['Data'].astype(int) / 10**9  # Timestamp in secondi
-            else:
-                continue  # Se non possiamo convertire a timestamp, saltiamo
-            
-            # Ordina per data
-            gruppo_docente = gruppo_docente.sort_values(by='data_ts')
-            
-            # Cerca lezioni con date vicine (entro 3 giorni)
-            for i in range(len(gruppo_docente)):
-                for j in range(i+1, len(gruppo_docente)):
-                    rec_i = gruppo_docente.iloc[i]
-                    rec_j = gruppo_docente.iloc[j]
-                    
-                    # Differenza in giorni
-                    diff_giorni = abs(rec_j['data_ts'] - rec_i['data_ts']) / (60*60*24)
-                    
-                    if diff_giorni <= 3:  # Entro 3 giorni
-                        # Cerca anche somiglianza in altri campi importanti
-                        # Verifica se sono lezioni simili (stesso insegnamento o simile)
-                        insegnamento_i = str(rec_i.get('Denominazione Insegnamento', '')).lower()
-                        insegnamento_j = str(rec_j.get('Denominazione Insegnamento', '')).lower()
-                        
-                        # Calcola somiglianza tra stringhe (ratio tra 0 e 1)
-                        similarita = difflib.SequenceMatcher(None, insegnamento_i, insegnamento_j).ratio()
-                        
-                        # Se hanno docente, date vicine e insegnamenti simili, potrebbero essere duplicati
-                        if similarita > 0.6:  # Soglia di somiglianza
-                            # Crea una chiave per questo gruppo
-                            gruppo_key = f"avanzato|{rec_i['Data_str']}~{rec_j['Data_str']}|{docente}"
+            # Memorizza questo record per il docente
+            if docente not in docenti_records:
+                docenti_records[docente] = []
+            docenti_records[docente].append(row)
+        
+        # Confronta i nomi dei docenti per trovare possibili inversioni nome-cognome
+        docenti_list = list(docenti_records.keys())
+        for i in range(len(docenti_list)):
+            for j in range(i + 1, len(docenti_list)):
+                docente1 = docenti_list[i]
+                docente2 = docenti_list[j]
+                
+                # Verifica se potrebbero essere lo stesso docente con nome/cognome invertiti
+                if sono_stesso_docente(docente1, docente2):
+                    # Per ogni record del primo docente
+                    for rec_i in docenti_records[docente1]:
+                        # Per ogni record del secondo docente
+                        for rec_j in docenti_records[docente2]:
+                            # Verifica che i record abbiano la stessa data
+                            data_i = str(rec_i.get('Data_str', ''))
+                            data_j = str(rec_j.get('Data_str', ''))
                             
-                            # Crea un DataFrame con i due record
-                            duplicati_df = pd.DataFrame([rec_i, rec_j])
+                            # Se le date sono diverse, non sono gli stessi record
+                            if data_i != data_j or not data_i:
+                                continue
+                                
+                            # Verifica che i record abbiano lo stesso orario
+                            orario_i = str(rec_i.get('Orario', ''))
+                            orario_j = str(rec_j.get('Orario', ''))
                             
-                            # Aggiungi al dizionario dei gruppi
-                            gruppi_duplicati[gruppo_key] = duplicati_df
+                            # Se gli orari sono diversi, non sono gli stessi record
+                            if orario_i != orario_j or not orario_i:
+                                continue
+                                
+                            # Verifica ulteriormente se gli altri campi sono simili
+                            # Ad esempio, stesso insegnamento o insegnamenti simili
+                            insegnamento_i = str(rec_i.get('Denominazione Insegnamento', '')).lower()
+                            insegnamento_j = str(rec_j.get('Denominazione Insegnamento', '')).lower()
+                            
+                            # Calcola somiglianza tra stringhe (ratio tra 0 e 1)
+                            similarita = difflib.SequenceMatcher(None, insegnamento_i, insegnamento_j).ratio()
+                            
+                            if similarita > 0.6:  # Soglia di somiglianza
+                                # Crea una chiave per questo gruppo basata sui nomi dei docenti e data
+                                gruppo_key = f"avanzato|docenti_invertiti|{data_i}|{docente1}~{docente2}"
+                                
+                                # Crea un DataFrame con i due record
+                                duplicati_df = pd.DataFrame([rec_i, rec_j])
+                                
+                                # Aggiungi al dizionario dei gruppi
+                                gruppi_duplicati[gruppo_key] = duplicati_df
         
         # 2. Cerca record con stesso insegnamento, stessa data ma orari vicini (possibili errori di battitura)
         if 'Denominazione Insegnamento' in working_df.columns:
@@ -141,12 +381,58 @@ def trova_potenziali_duplicati(df: pd.DataFrame, metodo: str = 'standard') -> Di
                     # In caso di errori nel confronto orari, procedi comunque
                     logger.warning(f"Errore nel confronto orari per lezione: {e}")
                     continue
+        
+        # 3. Controllo sovrapposizioni di orario per lo stesso docente
+        # Questo controllo identifica le lezioni dello stesso docente che si sovrappongono nel tempo
+        for docente, lezioni_docente in working_df.groupby('Docente'):
+            if len(lezioni_docente) < 2:  # Servono almeno 2 lezioni per una sovrapposizione
+                continue
+                
+            # Raggruppa per data
+            for data, lezioni_giorno in lezioni_docente.groupby('Data_str'):
+                if len(lezioni_giorno) < 2:  # Servono almeno 2 lezioni nello stesso giorno
+                    continue
+                    
+                try:
+                    # Converti orari in minuti per confronto numerico
+                    lezioni_giorno['orario_minuti'] = lezioni_giorno['Orario'].apply(lambda x: 
+                        int(str(x).split(':')[0]) * 60 + int(str(x).split(':')[1]) 
+                        if ':' in str(x) else 0)
+                    
+                    # Ordina per orario
+                    lezioni_giorno = lezioni_giorno.sort_values('orario_minuti')
+                    
+                    # Cerca lezioni con orari sovrapposti o molto vicini (entro 30 minuti)
+                    sovrapposizioni_trovate = []
+                    for i in range(len(lezioni_giorno)):
+                        for j in range(i+1, len(lezioni_giorno)):
+                            rec_i = lezioni_giorno.iloc[i]
+                            rec_j = lezioni_giorno.iloc[j]
+                            
+                            # Calcola differenza in minuti
+                            diff_minuti = abs(rec_j['orario_minuti'] - rec_i['orario_minuti'])
+                            
+                            # Se gli orari sono molto vicini (entro 30 minuti), potrebbero essere un problema
+                            if diff_minuti <= 30:  
+                                # Crea una chiave per questo gruppo di sovrapposizioni
+                                gruppo_key = f"avanzato|sovrapposizione|{data}|{docente}|{rec_i['Orario']}~{rec_j['Orario']}"
+                                
+                                # Crea un DataFrame con i due record
+                                duplicati_df = pd.DataFrame([rec_i, rec_j])
+                                
+                                # Aggiungi al dizionario dei gruppi
+                                gruppi_duplicati[gruppo_key] = duplicati_df
+                except Exception as e:
+                    # In caso di errori nel confronto orari, procedi comunque
+                    logger.warning(f"Errore nel confronto orari per sovrapposizione: {e}")
+                    continue
     
     return gruppi_duplicati
 
 def evidenzia_differenze(str1: str, str2: str) -> Tuple[str, str]:
     """
     Evidenzia le differenze tra due stringhe per mostrare visivamente cosa è cambiato.
+    Rende visibili anche gli spazi.
     
     Args:
         str1: Prima stringa
@@ -155,6 +441,22 @@ def evidenzia_differenze(str1: str, str2: str) -> Tuple[str, str]:
     Returns:
         Tuple[str, str]: Le due stringhe con le differenze evidenziate in HTML
     """
+    # Controlliamo se la differenza è solo negli spazi
+    str1_norm = normalizza_stringa(str1)
+    str2_norm = normalizza_stringa(str2)
+    diff_solo_spazi = (str1_norm == str2_norm) and (str1 != str2)
+    
+    # Se la differenza è solo negli spazi, utilizziamo una visualizzazione specializzata
+    if diff_solo_spazi:
+        # Sostituiamo gli spazi con un punto mediano visibile e evidenziamo le stringhe
+        str1_vis = str1.replace(' ', '·')
+        str2_vis = str2.replace(' ', '·')
+        return (
+            f"<span style='background-color: #FFEECC'>{str1_vis}</span>", 
+            f"<span style='background-color: #FFEECC'>{str2_vis}</span>"
+        )
+    
+    # Altrimenti procediamo con l'evidenziazione standard delle differenze
     matcher = difflib.SequenceMatcher(None, str1, str2)
     str1_html = []
     str2_html = []
@@ -164,16 +466,19 @@ def evidenzia_differenze(str1: str, str2: str) -> Tuple[str, str]:
             str1_html.append(str1[i1:i2])
             str2_html.append(str2[j1:j2])
         elif op == 'insert':
-            str2_html.append(f"<span style='background-color: #CCFFCC'>{str2[j1:j2]}</span>")
+            str2_html.append(f"<span style='background-color: #CCFFCC'>{str2[j1:j2].replace(' ', '·')}</span>")
         elif op == 'delete':
-            str1_html.append(f"<span style='background-color: #FFCCCC'>{str1[i1:i2]}</span>")
+            str1_html.append(f"<span style='background-color: #FFCCCC'>{str1[i1:i2].replace(' ', '·')}</span>")
         elif op == 'replace':
-            str1_html.append(f"<span style='background-color: #FFCCCC'>{str1[i1:i2]}</span>")
-            str2_html.append(f"<span style='background-color: #CCFFCC'>{str2[j1:j2]}</span>")
+            # Nelle sostituzioni, rendiamo visibili gli spazi
+            str1_seg = str1[i1:i2].replace(' ', '·')
+            str2_seg = str2[j1:j2].replace(' ', '·')
+            str1_html.append(f"<span style='background-color: #FFCCCC'>{str1_seg}</span>")
+            str2_html.append(f"<span style='background-color: #CCFFCC'>{str2_seg}</span>")
     
     return ''.join(str1_html), ''.join(str2_html)
 
-def confronta_record(record1: pd.Series, record2: pd.Series) -> Dict[str, Tuple[str, str, bool]]:
+def confronta_record(record1: pd.Series, record2: pd.Series) -> Dict[str, Tuple[str, str, bool, bool]]:
     """
     Confronta due record e restituisce le differenze formattate.
     
@@ -182,8 +487,9 @@ def confronta_record(record1: pd.Series, record2: pd.Series) -> Dict[str, Tuple[
         record2: Secondo record
         
     Returns:
-        Dict[str, Tuple[str, str, bool]]: Dizionario con le differenze evidenziate per ogni campo
-                                        e un flag che indica se il campo è diverso
+        Dict[str, Tuple[str, str, bool, bool]]: Dizionario con le differenze evidenziate per ogni campo,
+                                              un flag che indica se il campo è diverso e
+                                              un flag che indica se la differenza è solo negli spazi
     """
     differenze = {}
     
@@ -192,18 +498,35 @@ def confronta_record(record1: pd.Series, record2: pd.Series) -> Dict[str, Tuple[
         val1 = str(record1[campo]) if pd.notna(record1[campo]) else ""
         val2 = str(record2[campo]) if pd.notna(record2[campo]) else ""
         
+        # Normalizza i valori per il confronto senza spazi extra
+        val1_norm = normalizza_stringa(val1)
+        val2_norm = normalizza_stringa(val2)
+        
         # Verifica se i campi sono diversi
         if val1 != val2:
-            val1_html, val2_html = evidenzia_differenze(val1, val2)
-            differenze[campo] = (val1_html, val2_html, True)
+            # Determina se la differenza è solo negli spazi
+            diff_solo_spazi = (val1_norm == val2_norm)
+            
+            # Prepara la visualizzazione delle differenze
+            if diff_solo_spazi:
+                # Sostituiamo gli spazi con un simbolo visibile per evidenziare la differenza
+                val1_vis = val1.replace(' ', '·')
+                val2_vis = val2.replace(' ', '·')
+                val1_html = f"<span style='background-color: #FFEECC'>{val1_vis}</span>"
+                val2_html = f"<span style='background-color: #FFEECC'>{val2_vis}</span>"
+            else:
+                val1_html, val2_html = evidenzia_differenze(val1, val2)
+            
+            differenze[campo] = (val1_html, val2_html, True, diff_solo_spazi)
         else:
-            differenze[campo] = (val1, val2, False)
+            differenze[campo] = (val1, val2, False, False)
     
     return differenze
 
 def genera_report_duplicati(df: pd.DataFrame, gruppi_duplicati: Dict[str, pd.DataFrame]) -> str:
     """
     Genera un report di testo con i dettagli dei potenziali record duplicati.
+    Include informazioni su spazi extra nei campi.
     
     Args:
         df: DataFrame contenente i dati delle lezioni
@@ -363,6 +686,9 @@ def mostra_confronto_duplicati(df: pd.DataFrame):
             help="Scarica un report dettagliato di tutti i potenziali duplicati"
         )
     
+    # Genera il report completo
+    report_text = genera_report_duplicati(df, gruppi_duplicati)
+    
     # Crea una lista di gruppi per la selezione
     gruppi_keys = list(gruppi_duplicati.keys())
     
@@ -376,34 +702,85 @@ def mostra_confronto_duplicati(df: pd.DataFrame):
         tipo = "Standard"
         if k.startswith("avanzato|"):
             tipo = "Avanzato"
+            
+        # Estrai informazioni dal gruppo
+        parts = k.split("|")
+        df_gruppo = gruppi_duplicati[k]
+        num_records = len(df_gruppo)
         
-        # Rimuove il prefisso del tipo
-        parts = k.split('|')[1:]
+        # Identifica se ci sono differenze solo per spazi extra
+        differenze_spazi = False
+        if len(df_gruppo) >= 2:
+            # Controlla ogni campo per vedere se differisce solo per spazi
+            for colonna in ['Docente', 'Orario', 'Denominazione Insegnamento', 'Aula', 'Insegnamento comune']:
+                if colonna in df_gruppo.columns:
+                    # Crea versioni normalizzate
+                    valori = df_gruppo[colonna].astype(str).tolist()
+                    valori_norm = [normalizza_stringa(v) for v in valori]
+                    
+                    # Se i valori normalizzati sono tutti uguali ma i valori originali differiscono, 
+                    # abbiamo trovato differenze dovute solo a spazi
+                    if len(set(valori)) > len(set(valori_norm)) and len(set(valori_norm)) == 1:
+                        differenze_spazi = True
+                        break
         
-        if len(parts) >= 3:
-            # Per gruppi standard
-            if '~' not in k:
-                formatted_keys.append(f"[{tipo}] Data: {parts[0]}, Docente: {parts[1]}, Orario: {parts[2]}")
-            # Per gruppi avanzati con date simili
-            elif '~' in parts[0]:
-                date = parts[0].split('~')
-                formatted_keys.append(f"[{tipo}] Date: {date[0]}~{date[1]}, Docente: {parts[1]}")
-            # Per gruppi avanzati con orari simili
-            elif '~' in parts[1]:
-                orari = parts[1].split('~')
-                formatted_keys.append(f"[{tipo}] Data: {parts[0]}, Orari: {orari[0]}~{orari[1]}, {parts[2][:30]}")
+        # Crea una descrizione leggibile
+        if len(parts) >= 3 and parts[0] == "standard":
+            # Per i gruppi standard, mostra data, docente e numero di record
+            data_docente = parts[1].split('|')
+            if len(data_docente) >= 3:
+                data = data_docente[0]
+                docente = data_docente[1]
+                descrizione = f"{tipo}: {data} - {docente} ({num_records} record)"
+                if differenze_spazi:
+                    descrizione = f"⚠️ {descrizione} [Differenze per spazi]"
+                formatted_keys.append((k, descrizione))
+        elif len(parts) >= 3 and parts[0] == "avanzato":
+            # Per i gruppi avanzati, mostra il tipo di rilevamento e informazioni rilevanti
+            subtipo = parts[1]
+            if subtipo == "errore_ortografico":
+                docenti = parts[2].split('~')
+                descrizione = f"{tipo}: Possibile errore ortografico - {' vs '.join(docenti)} ({num_records} record)"
+                if differenze_spazi:
+                    descrizione = f"⚠️ {descrizione} [Differenze per spazi]"
+                formatted_keys.append((k, descrizione))
+            elif subtipo == "docenti_invertiti":
+                if len(parts) >= 4:
+                    data = parts[2]
+                    docenti = parts[3].split('~')
+                    descrizione = f"{tipo}: Nome/Cognome invertito {data} - {' vs '.join(docenti)} ({num_records} record)"
+                    if differenze_spazi:
+                        descrizione = f"⚠️ {descrizione} [Differenze per spazi]"
+                    formatted_keys.append((k, descrizione))
+            elif subtipo == "sovrapposizione":
+                if len(parts) >= 5:
+                    data = parts[2]
+                    docente = parts[3]
+                    orari = parts[4].split('~')
+                    descrizione = f"{tipo}: Sovrapposizione orari {data} - {docente} - {' vs '.join(orari)} ({num_records} record)"
+                    if differenze_spazi:
+                        descrizione = f"⚠️ {descrizione} [Differenze per spazi]"
+                    formatted_keys.append((k, descrizione))
             else:
-                formatted_keys.append(f"[{tipo}] {' | '.join(parts)}")
+                # Per altri tipi, usa una descrizione generica
+                descrizione = f"{tipo}: Gruppo duplicati {k.split('|')[-1]} ({num_records} record)"
+                if differenze_spazi:
+                    descrizione = f"⚠️ {descrizione} [Differenze per spazi]"
+                formatted_keys.append((k, descrizione))
         else:
-            formatted_keys.append(f"[{tipo}] {' | '.join(parts)}")
+            # Fallback per chiavi sconosciute
+            descrizione = f"Gruppo duplicati {k} ({num_records} record)"
+            if differenze_spazi:
+                descrizione = f"⚠️ {descrizione} [Differenze per spazi]"
+            formatted_keys.append((k, descrizione))
     
     # Crea un mapping tra le chiavi formattate e quelle originali
-    key_mapping = dict(zip(formatted_keys, gruppi_keys))
+    key_mapping = dict(zip([x[1] for x in formatted_keys], [x[0] for x in formatted_keys]))
     
     # Seleziona il gruppo da visualizzare
     selected_formatted_key = st.selectbox(
         "Seleziona un gruppo di potenziali duplicati da esaminare:",
-        [""] + formatted_keys
+        [""] + [x[1] for x in formatted_keys]
     )
     
     if selected_formatted_key:
@@ -580,13 +957,16 @@ def mostra_confronto_duplicati(df: pd.DataFrame):
             with col2:
                 st.write("Record 2")
             
-            for campo, (val1, val2, diverso) in differenze.items():
+            for campo, (val1, val2, diverso, diff_solo_spazi) in differenze.items():
                 if diverso:
                     col1, col2 = st.columns(2)
                     with col1:
                         st.markdown(f"**{campo}**: {val1}", unsafe_allow_html=True)
                     with col2:
                         st.markdown(f"**{campo}**: {val2}", unsafe_allow_html=True)
+                    # Se la differenza è solo negli spazi, aggiungi un indicatore
+                    if diff_solo_spazi:
+                        st.caption("⚠️ Questo campo differisce solo per spazi extra")
         else:
             # Confronto multiplo quando ci sono più di 2 record
             st.write("Confronto campi che differiscono tra i record:")
@@ -617,6 +997,17 @@ def mostra_confronto_duplicati(df: pd.DataFrame):
                     st.write("---")
             else:
                 st.write("Nessuna differenza significativa rilevata nei campi.")
+    
+    # Visualizza il report completo in fondo alla pagina
+    st.markdown("---")
+    with st.expander("📋 Report completo dei duplicati", expanded=False):
+        st.markdown("""
+        ### Report completo dei duplicati
+        
+        Questo report fornisce un riepilogo dettagliato di tutti i gruppi di duplicati trovati nel sistema.
+        Include informazioni su tutti i gruppi e le principali differenze rilevate.
+        """)
+        st.code(report_text, language="text")
 
 def elimina_duplicati_esatti(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -948,11 +1339,13 @@ def mostra_analisi_cfu(df: pd.DataFrame, target_cfu: float = 16.0):
                                         """)
                                 
                                 # Aggiungi azione di ricerca duplicati avanzata per questa classe
-                                st.button(
+                                if st.button(
                                     f"🔍 Analizza duplicati per {row['Classe']}", 
                                     key=f"analizza_{row['Classe']}", 
                                     help=f"Esegui un'analisi approfondita dei potenziali duplicati per la classe {row['Classe']}"
-                                )
+                                ):
+                                    # Chiama la funzione per mostrare dettagli CFU per questa classe
+                                    mostra_dettaglio_cfu_classe(df, row['Classe'])
                     else:
                         st.success("✅ Tutte le classi di lingue hanno i CFU allineati al target.")
                 else:
@@ -991,6 +1384,17 @@ def mostra_analisi_cfu(df: pd.DataFrame, target_cfu: float = 16.0):
             }
         )
         
+        # Aggiungi azione per vedere dettagli di una classe specifica
+        classe_selezionata_per_dettaglio = st.selectbox(
+            "Visualizza dettagli completi per una classe:",
+            [""] + sorted(filtered_df['Insegnamento comune'].unique().tolist()),
+            help="Seleziona una classe di concorso per visualizzare i dettagli completi dei CFU, percorsi formativi e informazioni trasversali"
+        )
+        
+        if classe_selezionata_per_dettaglio:
+            # Chiama la funzione per mostrare dettagli CFU per questa classe
+            mostra_dettaglio_cfu_classe(df, classe_selezionata_per_dettaglio)
+        
         # Scarica report analisi CFU
         st.download_button(
             label="📄 Scarica report analisi CFU",
@@ -1009,3 +1413,330 @@ def mostra_analisi_cfu(df: pd.DataFrame, target_cfu: float = 16.0):
         st.info("Nessuna classe di concorso trovata con i filtri selezionati")
     
     return cfu_analisi
+
+def mostra_dettaglio_cfu_classe(df: pd.DataFrame, classe: str):
+    """
+    Mostra i dettagli completi dei CFU per una classe di concorso specifica,
+    inclusi i percorsi formativi e le informazioni sulla trasversale della classe.
+    
+    Args:
+        df: DataFrame contenente i dati delle lezioni
+        classe: Classe di concorso da analizzare in dettaglio
+    """
+    from percorsi_formativi import (
+        PERCORSI_CFU, AREE_FORMATIVE, SUBAREE_TRASVERSALI,
+        CLASSI_GRUPPO_A, CLASSI_GRUPPO_B, CLASSI_TRASVERSALI
+    )
+
+    st.subheader(f"📚 Dettaglio CFU per {classe}")
+    
+    if df is None or df.empty:
+        st.info("Nessun dato disponibile per l'analisi dettagliata")
+        return
+    
+    # Crea una copia del dataframe per le operazioni
+    working_df = df.copy()
+    
+    # Pulisci e standardizza i valori dei CFU
+    working_df['CFU_clean'] = working_df['CFU'].astype(str).str.replace(',', '.')
+    working_df['CFU_clean'] = working_df['CFU_clean'].replace('nan', '0')
+    working_df['CFU_numeric'] = pd.to_numeric(working_df['CFU_clean'], errors='coerce').fillna(0)
+    
+    # Rimuovi i duplicati per avere conteggi accurati
+    working_df = working_df.drop_duplicates(subset=['Data', 'Orario', 'Docente', 'Denominazione Insegnamento'])
+    
+    # Filtra per la classe selezionata
+    classe_df = working_df[working_df['Insegnamento comune'] == classe]
+    
+    # Se la classe non esiste nel dataframe
+    if classe_df.empty:
+        st.warning(f"La classe di concorso {classe} non è presente nei dati o non ha lezioni assegnate.")
+        return
+    
+    # Calcola i CFU totali per la classe
+    cfu_totali = round(classe_df['CFU_numeric'].sum(), 1)
+    num_lezioni = len(classe_df)
+    
+    # Determina se la classe appartiene al gruppo A o B e quale trasversale le è associata
+    gruppo_trasversale = None
+    if classe in CLASSI_GRUPPO_A:
+        gruppo_trasversale = "A"
+    elif classe in CLASSI_GRUPPO_B:
+        gruppo_trasversale = "B"
+    
+    # Crea tabs per organizzare le informazioni
+    tab1, tab2, tab3, tab4 = st.tabs(["📊 Riepilogo", "🔄 Percorsi Formativi", "🔀 Classi Trasversali", "📋 Elenco Lezioni"])
+    
+    # TAB 1: Riepilogo generale
+    with tab1:
+        # Mostra informazioni generali sulla classe
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric(label="Totale CFU", value=cfu_totali)
+            st.metric(label="Numero Lezioni", value=num_lezioni)
+        
+        with col2:
+            if gruppo_trasversale:
+                st.info(f"📌 Questa classe appartiene al gruppo {gruppo_trasversale} (Trasversale {gruppo_trasversale})")
+            else:
+                st.info("📌 Questa classe non appartiene né al gruppo A né al gruppo B")
+            
+            # Calcola CFU medi per lezione
+            cfu_medi = round(cfu_totali / num_lezioni, 2) if num_lezioni > 0 else 0
+            st.metric(label="CFU medi per lezione", value=cfu_medi)
+        
+        # Mostra i dipartimenti associati
+        if 'Dipartimento' in classe_df.columns:
+            dipartimenti = classe_df['Dipartimento'].dropna().unique()
+            if len(dipartimenti) > 0:
+                st.write("### Dipartimenti associati:")
+                for dip in dipartimenti:
+                    st.write(f"- {dip}")
+        
+        # Mostra i docenti che insegnano questa classe
+        st.write("### Docenti:")
+        docenti_stats = classe_df.groupby('Docente').agg(
+            Lezioni=pd.NamedAgg(column='Denominazione Insegnamento', aggfunc='count'),
+            CFU=pd.NamedAgg(column='CFU_numeric', aggfunc='sum')
+        ).reset_index()
+        
+        docenti_stats['CFU'] = docenti_stats['CFU'].round(1)
+        st.dataframe(docenti_stats.sort_values('CFU', ascending=False), use_container_width=True, hide_index=True)
+    
+    # TAB 2: Percorsi Formativi
+    with tab2:
+        st.write("### Percorsi Formativi applicabili")
+        
+        # Controlla se le colonne dei percorsi formativi sono presenti
+        percorsi_disponibili = [p for p in PERCORSI_CFU.keys() if p in working_df.columns]
+        
+        if not percorsi_disponibili:
+            st.info("Nessun percorso formativo trovato nel dataset.")
+        else:
+            # Per ogni percorso, calcola i CFU erogati e la distribuzione P/D
+            percorsi_data = []
+            
+            for percorso in percorsi_disponibili:
+                # Filtra per lezioni della classe corrente
+                percorso_df = classe_df[classe_df[percorso].isin(['P', 'D'])]
+                
+                # Separa in P e D
+                p_df = percorso_df[percorso_df[percorso] == 'P']
+                d_df = percorso_df[percorso_df[percorso] == 'D']
+                
+                # Calcola CFU per modalità
+                cfu_p = round(p_df['CFU_numeric'].sum(), 1)
+                cfu_d = round(d_df['CFU_numeric'].sum(), 1)
+                cfu_tot = cfu_p + cfu_d
+                
+                # Aggiungi al risultato
+                percorsi_data.append({
+                    'Percorso': percorso,
+                    'CFU Presenza': cfu_p,
+                    'CFU Distanza': cfu_d,
+                    'CFU Totali': cfu_tot,
+                    'Lezioni Presenza': len(p_df),
+                    'Lezioni Distanza': len(d_df)
+                })
+            
+            # Visualizza tabella dei percorsi
+            percorsi_df = pd.DataFrame(percorsi_data)
+            st.dataframe(percorsi_df, use_container_width=True, hide_index=True)
+            
+            # Per ogni percorso, mostra tab con dettaglio conformità rispetto ai requisiti DPCM
+            if percorsi_data:
+                percorsi_tabs = st.tabs([p['Percorso'] for p in percorsi_data])
+                
+                for i, percorso in enumerate([p['Percorso'] for p in percorsi_data]):
+                    with percorsi_tabs[i]:
+                        # Ottieni i requisiti dal DPCM per questo percorso
+                        requisiti = PERCORSI_CFU.get(percorso, {})
+                        
+                        if not requisiti:
+                            st.warning(f"Requisiti non definiti per il percorso {percorso}")
+                            continue
+                        
+                        st.write(f"#### Conformità {percorso} rispetto al DPCM")
+                        
+                        # Filtra per il percorso corrente
+                        percorso_classe_df = classe_df[classe_df[percorso].isin(['P', 'D'])]
+                        
+                        # Aggiungi la classificazione delle aree formative
+                        from cfu_riepilogo_utils import _classifica_insegnamenti_per_area
+                        df_classificato = _classifica_insegnamenti_per_area(percorso_classe_df)
+                        
+                        # Calcola i CFU per area formativa
+                        cfu_per_area = df_classificato.groupby('Area Formativa')['CFU_numeric'].sum().reset_index()
+                        cfu_per_area['CFU_numeric'] = cfu_per_area['CFU_numeric'].round(1)
+                        
+                        # Aggiunge requisiti del DPCM e calcola conformità
+                        result_data = []
+                        for area in AREE_FORMATIVE:
+                            cfu_req = requisiti.get(area, 0)
+                            cfu_erog = cfu_per_area[cfu_per_area['Area Formativa'] == area]['CFU_numeric'].sum() if area in cfu_per_area['Area Formativa'].values else 0
+                            diff = round(cfu_erog - cfu_req, 1)
+                            stato = "✅" if diff >= 0 or cfu_req == 0 else "❌"
+                            
+                            result_data.append({
+                                'Area': area,
+                                'CFU Erogati': cfu_erog,
+                                'CFU Richiesti': cfu_req,
+                                'Differenza': diff,
+                                'Stato': stato
+                            })
+                        
+                        # Visualizza tabella di conformità
+                        result_df = pd.DataFrame(result_data)
+                        st.dataframe(result_df, use_container_width=True, hide_index=True)
+                        
+                        # Se il percorso ha requisiti per subaree trasversali, mostrali
+                        if 'Trasversale_dettaglio' in requisiti:
+                            st.write("#### Dettaglio Subaree Trasversali")
+                            
+                            # Filtra per area trasversale
+                            trasv_df = df_classificato[df_classificato['Area Formativa'] == 'Trasversale']
+                            
+                            # Calcola CFU per subarea
+                            if not trasv_df.empty and 'Subarea Trasversale' in trasv_df.columns:
+                                subaree_data = []
+                                
+                                # Per ogni subarea definita nel DPCM
+                                for subarea in SUBAREE_TRASVERSALI:
+                                    # Trova i requisiti per questa subarea
+                                    req_subarea = requisiti['Trasversale_dettaglio'].get(subarea, 0)
+                                    
+                                    # Calcola CFU erogati per questa subarea
+                                    erog_subarea = trasv_df[trasv_df['Subarea Trasversale'] == subarea]['CFU_numeric'].sum()
+                                    erog_subarea = round(erog_subarea, 1)
+                                    
+                                    # Calcola la differenza
+                                    diff = round(erog_subarea - req_subarea, 1)
+                                    
+                                    # Determina lo stato
+                                    stato = "✅" if diff >= 0 or req_subarea == 0 else "❌"
+                                    
+                                    # Aggiungi ai dati
+                                    subaree_data.append({
+                                        'Subarea': subarea,
+                                        'CFU Erogati': erog_subarea,
+                                        'CFU Richiesti': req_subarea,
+                                        'Differenza': diff,
+                                        'Stato': stato
+                                    })
+                                
+                                # Visualizza tabella delle subaree
+                                subaree_df = pd.DataFrame(subaree_data)
+                                st.dataframe(subaree_df, use_container_width=True, hide_index=True)
+                            else:
+                                st.info("Nessun dato disponibile per le subaree trasversali")
+    
+    # TAB 3: Classi Trasversali
+    with tab3:
+        st.write("### Informazioni sulle Classi Trasversali")
+        
+        # Se la classe è già una trasversale
+        if classe in CLASSI_TRASVERSALI:
+            st.info(f"La classe {classe} è una classe trasversale.")
+            
+            # Ottiene i dati specifici di questa classe trasversale
+            from cfu_riepilogo_utils import _classifica_insegnamenti_per_area
+            trasv_df = _classifica_insegnamenti_per_area(classe_df)
+            
+            # Mostra la suddivisione per subaree trasversali
+            if 'Subarea Trasversale' in trasv_df.columns:
+                # Calcola CFU per subarea
+                subaree_cfu = trasv_df.groupby('Subarea Trasversale')['CFU_numeric'].sum().reset_index()
+                subaree_cfu['CFU_numeric'] = subaree_cfu['CFU_numeric'].round(1)
+                subaree_cfu = subaree_cfu.rename(columns={'CFU_numeric': 'CFU'})
+                
+                st.write("#### CFU per Subarea Trasversale")
+                st.dataframe(subaree_cfu, use_container_width=True, hide_index=True)
+            
+        # Se la classe appartiene a un gruppo che ha una trasversale associata
+        elif gruppo_trasversale:
+            trasversale_associata = f"Trasversale {gruppo_trasversale}"
+            st.info(f"La classe {classe} è associata alla {trasversale_associata}")
+            
+            # Ottieni i dati della trasversale associata
+            trasv_df = working_df[working_df['Insegnamento comune'] == trasversale_associata]
+            
+            if not trasv_df.empty:
+                # Calcola CFU totali della trasversale
+                cfu_trasv = round(trasv_df['CFU_numeric'].sum(), 1)
+                num_lezioni_trasv = len(trasv_df)
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.metric(label=f"CFU {trasversale_associata}", value=cfu_trasv)
+                with col2:
+                    st.metric(label=f"Lezioni {trasversale_associata}", value=num_lezioni_trasv)
+                
+                # Classifica gli insegnamenti per subarea
+                from cfu_riepilogo_utils import _classifica_insegnamenti_per_area
+                trasv_classif = _classifica_insegnamenti_per_area(trasv_df)
+                
+                # Mostra la suddivisione per subaree trasversali
+                if 'Subarea Trasversale' in trasv_classif.columns:
+                    # Calcola CFU per subarea
+                    subaree_cfu = trasv_classif.groupby('Subarea Trasversale')['CFU_numeric'].sum().reset_index()
+                    subaree_cfu['CFU_numeric'] = subaree_cfu['CFU_numeric'].round(1)
+                    subaree_cfu = subaree_cfu.rename(columns={'CFU_numeric': 'CFU'})
+                    
+                    st.write("#### CFU per Subarea Trasversale")
+                    st.dataframe(subaree_cfu.sort_values('CFU', ascending=False), use_container_width=True, hide_index=True)
+                
+                # Mostra docenti della trasversale
+                st.write(f"#### Docenti per {trasversale_associata}:")
+                docenti_trasv = trasv_df.groupby('Docente').agg(
+                    Lezioni=pd.NamedAgg(column='Denominazione Insegnamento', aggfunc='count'),
+                    CFU=pd.NamedAgg(column='CFU_numeric', aggfunc='sum')
+                ).reset_index()
+                
+                docenti_trasv['CFU'] = docenti_trasv['CFU'].round(1)
+                st.dataframe(docenti_trasv.sort_values('CFU', ascending=False), use_container_width=True, hide_index=True)
+            else:
+                st.warning(f"Non sono stati trovati dati per {trasversale_associata}")
+        else:
+            st.info("Questa classe non è associata a nessuna classe trasversale specifica")
+    
+    # TAB 4: Elenco Lezioni
+    with tab4:
+        st.write("### Elenco completo delle lezioni")
+        
+        # Prepara le colonne da visualizzare
+        display_cols = ['Data', 'Orario', 'Docente', 'Denominazione Insegnamento', 'CFU_numeric', 'Aula']
+        display_cols += [p for p in percorsi_disponibili if p in working_df.columns]
+        
+        # Filtra le colonne che esistono effettivamente nel DataFrame
+        display_cols = [col for col in display_cols if col in classe_df.columns]
+        
+        # Rinomina colonne per una migliore visualizzazione
+        renamed_cols = {
+            'CFU_numeric': 'CFU',
+            'Denominazione Insegnamento': 'Denominazione'
+        }
+        
+        # Crea una copia per la visualizzazione
+        display_df = classe_df[display_cols].copy()
+        
+        # Rinomina colonne
+        display_df = display_df.rename(columns=renamed_cols)
+        
+        # Converti la data in formato leggibile
+        if 'Data' in display_df.columns and hasattr(display_df['Data'], 'dt'):
+            display_df['Data'] = display_df['Data'].dt.strftime('%d/%m/%Y')
+        
+        # Ordina per data e orario
+        if 'Data' in display_df.columns and 'Orario' in display_df.columns:
+            display_df = display_df.sort_values(['Data', 'Orario'])
+        
+        # Mostra la tabella dettagliata
+        st.dataframe(display_df, use_container_width=True, hide_index=True)
+        
+        # Opzione per scaricare l'elenco delle lezioni
+        st.download_button(
+            label="📄 Scarica elenco lezioni",
+            data=display_df.to_csv(index=False),
+            file_name=f"lezioni_{classe}_{pd.Timestamp.now().strftime('%Y%m%d_%H%M')}.csv",
+            mime="text/csv"
+        )

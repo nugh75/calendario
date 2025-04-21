@@ -1009,9 +1009,7 @@ def admin_interface(df: pd.DataFrame) -> pd.DataFrame:
             pef30_all2_selected = st.checkbox("PeF30 all.2 (30 CFU)", key="admin_filter_pef30_all2")
             pef30_art13_selected = st.checkbox("PeF30 art.13 (30 CFU)", key="admin_filter_pef30_art13")
             
-        st.markdown("---")
-        
-        # Selettore delle colonne da visualizzare
+        st.markdown("---")            # Selettore delle colonne da visualizzare
         st.markdown("#### 👁️ Visualizzazione Colonne")
         
         # Definisci tutte le colonne disponibili con etichette user-friendly
@@ -1019,7 +1017,6 @@ def admin_interface(df: pd.DataFrame) -> pd.DataFrame:
             'Data': 'Data',
             'Orario': 'Orario',
             'Dipartimento': 'Dipartimento',
-            'Classe di concorso': 'Classe di concorso', 
             'Insegnamento comune': 'Insegnamento comune',
             'PeF60 all.1': 'PeF60 all.1',
             'PeF30 all.2': 'PeF30 all.2',
@@ -1212,8 +1209,8 @@ def admin_interface(df: pd.DataFrame) -> pd.DataFrame:
             # Visualizza i record con tutte le colonne rilevanti
             edit_df['Data_str'] = edit_df['Data'].apply(format_date)
             
-            # Mostra tutte le colonne rilevanti
-            view_cols = ['Data_str', 'Orario', 'Dipartimento', 'Classe di concorso', 'Insegnamento comune', 
+            # Mostra tutte le colonne rilevanti (rimossa 'Classe di concorso' perché obsoleta)
+            view_cols = ['Data_str', 'Orario', 'Dipartimento', 'Insegnamento comune', 
                       'PeF60 all.1', 'PeF30 all.2', 'PeF36 all.5', 'PeF30 art.13',
                       'Codice insegnamento', 'Denominazione Insegnamento', 'Docente', 'Aula', 
                       'Link Teams', 'CFU', 'Note']
@@ -1287,7 +1284,7 @@ def admin_interface(df: pd.DataFrame) -> pd.DataFrame:
             del_df['Data_str'] = del_df['Data'].apply(format_date)
             
             # Mostra tutte le colonne rilevanti
-            view_cols = ['Data_str', 'Orario', 'Dipartimento', 'Classe di concorso', 'Insegnamento comune', 
+            view_cols = ['Data_str', 'Orario', 'Dipartimento' , 'Insegnamento comune', 
                       'PeF60 all.1', 'PeF30 all.2', 'PeF36 all.5', 'PeF30 art.13',
                       'Codice insegnamento', 'Denominazione Insegnamento', 'Docente', 'Aula', 
                       'Link Teams', 'CFU', 'Note']

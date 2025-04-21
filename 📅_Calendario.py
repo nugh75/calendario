@@ -7,12 +7,13 @@ import pandas as pd
 from datetime import datetime
 import os
 from admin_utils import (
-    is_admin_logged_in, upload_excel_file,
+    is_admin_logged_in, upload_excel_file, login_admin, logout_admin,
     save_dataframe_to_db, verify_password
 )
 from file_utils import (
     load_data as load_data_central, format_date, setup_locale
 )
+from pages_visibility import hide_protected_pages, show_protected_pages
 from excel_utils import create_sample_excel
 from data_utils import create_new_record, edit_record 
 from file_utils import delete_record
@@ -47,6 +48,12 @@ def main():
         st.session_state.authenticated = False
     if 'total_records' not in st.session_state:
         st.session_state.total_records = 0
+    
+    # Gestione della visibilità delle pagine protette
+    if is_admin_logged_in():
+        show_protected_pages()
+    else:
+        hide_protected_pages()
     
     # Caricamento dei dati
     setup_locale()
@@ -194,6 +201,31 @@ def main():
             docente_selected = st.sidebar.multiselect("Seleziona docente:", docenti)
             
             # I filtri per percorsi formativi sono stati spostati
+            
+            # Aggiungiamo una separazione prima dell'area amministratore
+            st.sidebar.markdown("---")
+            st.sidebar.markdown("### 🔐 Area Amministratore")
+            
+            # Mostra il pulsante di login o logout in base allo stato di autenticazione
+            if not is_admin_logged_in():
+                with st.sidebar.expander("Accedi come amministratore"):
+                    password = st.text_input("Password", type="password", key="password_main")
+                    if st.button("Accedi", key="login_main"):
+                        if login_admin(password):
+                            st.success("✅ Accesso effettuato con successo!")
+                            # Aggiorna la visibilità delle pagine
+                            show_protected_pages()
+                            st.rerun()
+                        else:
+                            st.error("❌ Password errata")
+            else:
+                st.sidebar.success("✅ Accesso effettuato come amministratore")
+                if st.sidebar.button("🚪 Logout", key="logout_main"):
+                    # Prima nascondi le pagine protette
+                    hide_protected_pages()
+                    # Poi esegui il logout
+                    logout_admin()
+                    st.rerun()
             
             # Assicurati che ci siano sempre alcune colonne minime selezionate
             if not columns_to_display:

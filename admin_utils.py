@@ -41,7 +41,7 @@ ADMIN_PASSWORD = os.getenv("PS", "password_default")
 USE_PASSWORD_HASHING = True
 
 # Definizione delle colonne complete del dataset
-FULL_COLUMNS = ['Data', 'Orario', 'Dipartimento', 'Classe di concorso', 
+FULL_COLUMNS = ['Data', 'Orario', 'Dipartimento',
                'Insegnamento comune', 'PeF60 all.1', 'PeF30 all.2', 
                'PeF36 all.5', 'PeF30 art.13', 'Codice insegnamento',
                'Denominazione Insegnamento', 'Docente', 'Aula', 
