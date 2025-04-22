@@ -63,3 +63,4 @@ env/
 #log
 logs/
 *.log
+flask_backup
