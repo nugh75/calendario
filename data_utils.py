@@ -13,27 +13,13 @@ from date_utils import format_date
 BASE_COLUMNS = [
     'Data', 'Orario', 'Dipartimento',
     'Insegnamento comune', 'PeF60 all.1', 'PeF30 all.2', 'PeF36 all.5', 'PeF30 art.13',
-    'Codice insegnamento', 'Denominazione Insegnamento', 'Docente',
+    'Denominazione Insegnamento', 'Docente',
     'Aula', 'Link Teams', 'CFU', 'Note'
 ]
 
 FULL_COLUMNS = BASE_COLUMNS + ['Giorno', 'Mese', 'Anno']
 
-def normalize_code(code_str: str) -> str:
-    """
-    Normalizza un codice insegnamento rimuovendo eventuali decimali.
-    
-    Args:
-        code_str: Stringa con il codice insegnamento
-        
-    Returns:
-        str: Codice normalizzato
-    """
-    if pd.isna(code_str):
-        return ""
-    
-    code_str = str(code_str)
-    return code_str.split('.')[0] if '.' in code_str else code_str
+# La funzione normalize_code è stata rimossa perché la colonna "codice insegnamento" non è più utilizzata
 
 def create_new_record(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -65,7 +51,6 @@ def create_new_record(df: pd.DataFrame) -> pd.DataFrame:
     
     with col2:
         new_pef30_art13 = st.selectbox("PeF30 art.13", options=pef_options)
-        new_codice = st.text_input("Codice insegnamento")
         new_denominazione = st.text_input("Denominazione Insegnamento")
         new_docente = st.text_input("Docente")
         new_aula = st.text_input("Aula")
@@ -99,7 +84,6 @@ def create_new_record(df: pd.DataFrame) -> pd.DataFrame:
             'PeF30 all.2': new_pef30_all2,
             'PeF36 all.5': new_pef36,
             'PeF30 art.13': new_pef30_art13,
-            'Codice insegnamento': normalize_code(new_codice),
             'Denominazione Insegnamento': new_denominazione,
             'Docente': new_docente,
             'Aula': new_aula,
@@ -198,7 +182,6 @@ def edit_record(df: pd.DataFrame, index: int) -> pd.DataFrame:
     
     with col2:
         edit_pef30_art13 = st.text_input("PeF30 art.13", value=record['PeF30 art.13'] if pd.notna(record['PeF30 art.13']) else "")
-        edit_codice = st.text_input("Codice insegnamento", value=record['Codice insegnamento'] if pd.notna(record['Codice insegnamento']) else "")
         edit_denominazione = st.text_input("Denominazione Insegnamento", value=record['Denominazione Insegnamento'] if pd.notna(record['Denominazione Insegnamento']) else "")
         edit_docente = st.text_input("Docente", value=record['Docente'] if pd.notna(record['Docente']) else "")
         edit_aula = st.text_input("Aula", value=record['Aula'] if pd.notna(record['Aula']) else "")
@@ -232,7 +215,6 @@ def edit_record(df: pd.DataFrame, index: int) -> pd.DataFrame:
             'PeF30 all.2': edit_pef30_all2,
             'PeF36 all.5': edit_pef36,
             'PeF30 art.13': edit_pef30_art13,
-            'Codice insegnamento': normalize_code(edit_codice),
             'Denominazione Insegnamento': edit_denominazione,
             'Docente': edit_docente,
             'Aula': edit_aula,

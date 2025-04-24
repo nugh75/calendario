@@ -84,7 +84,6 @@ def main():
                 'Orario': 'Orario',
                 'Dipartimento': 'Dipartimento',
                 'Insegnamento comune': 'Insegnamento comune',
-                'Codice insegnamento': 'Codice insegnamento',
                 'Denominazione Insegnamento': 'Denominazione Insegnamento',
                 'Docente': 'Docente',
                 'Aula': 'Aula',

@@ -18,21 +18,24 @@ DATA_FOLDER = 'dati'
 DEFAULT_JSON_FILE = 'dati.json'
 DEFAULT_JSON_PATH = os.path.join(DATA_FOLDER, DEFAULT_JSON_FILE)
 
-# Colonne necessarie
-from file_utils import FULL_COLUMNS, BASE_COLUMNS
+# Importa le costanti necessarie da data_utils
+from data_utils import BASE_COLUMNS, FULL_COLUMNS
 
-def load_data() -> pd.DataFrame:
+def load_data(file_path=None, debug_container=None, print_debug=False) -> pd.DataFrame:
     """
-    Funzione centralizzata per caricare i dati del calendario.
-    Prima tenta di caricare da SQLite, se fallisce torna al metodo JSON.
+    Carica i dati dal file JSON predefinito o da un file specificato.
+    
+    Args:
+        file_path: Percorso personalizzato del file da caricare (opzionale)
+        debug_container: Container Streamlit per i messaggi di debug (opzionale)
+        print_debug: Se True, stampa messaggi di debug sulla console
     
     Returns:
-        pd.DataFrame: Dataframe contenente i dati del calendario, o un DataFrame vuoto in caso di errore
+        pd.DataFrame: DataFrame con i dati del file, o un DataFrame vuoto in caso di errore
     """
     try:
         # Configurazione iniziale
         setup_locale()
-        print_debug = True  # Attiva per ottenere output di debug dettagliato
         
         # Inizializza il logger se disponibile
         try:
@@ -77,10 +80,14 @@ def load_data() -> pd.DataFrame:
         # Inizializza un DataFrame vuoto con le colonne corrette
         empty_df = pd.DataFrame(columns=FULL_COLUMNS)
         
+        # Usa il file path personalizzato se fornito, altrimenti usa quello predefinito
+        if file_path is None:
+            file_path = DEFAULT_JSON_PATH
+        
         # Controlla se il file JSON esiste
-        if not os.path.exists(DEFAULT_JSON_PATH):
+        if not os.path.exists(file_path):
             if log_available:
-                logger.warning(f"File JSON {DEFAULT_JSON_PATH} non trovato.")
+                logger.warning(f"File JSON {file_path} non trovato.")
             
             # Cerca altri file JSON come fallback
             if not os.path.exists(DATA_FOLDER):
@@ -100,11 +107,10 @@ def load_data() -> pd.DataFrame:
             if log_available:
                 logger.info(f"Usando file JSON alternativo: {file_path}")
         else:
-            file_path = DEFAULT_JSON_PATH
             if log_available:
                 logger.debug(f"File JSON trovato: {file_path}")
         
-        # FASE 1: Verifica che il file sia leggibile
+        # Verifica che il file sia leggibile
         if print_debug:
             print(f"Verificando file JSON: {file_path}")
         
@@ -117,8 +123,8 @@ def load_data() -> pd.DataFrame:
             if log_available:
                 logger.warning(f"Il file JSON {file_path} è vuoto.")
             return empty_df
-        
-        # FASE 2: Lettura del file JSON
+            
+        # Lettura del file JSON
         try:
             if print_debug:
                 print("Tentativo di lettura del file JSON...")
@@ -139,38 +145,20 @@ def load_data() -> pd.DataFrame:
                 if col not in df.columns:
                     df[col] = None
             
-            if print_debug:
-                print(f"Verifica colonne del dataframe: {df.columns.tolist()}")
-            
-            # FASE 3: Pulizia dei dati
-            if print_debug:
-                print("Inizio pulizia dati...")
-            
+            # Pulizia dei dati
             # Rimuovi righe completamente vuote
             original_rows = len(df)
             df = df.dropna(how='all')
-            if print_debug:
-                print(f"Righe dopo rimozione vuote: {len(df)} (rimosse {original_rows - len(df)})")
             
             # Filtra le righe che hanno almeno l'orario compilato
             if 'Orario' in df.columns:
                 rows_before = len(df)
                 df = df[df['Orario'].notna() & (df['Orario'] != '')]
-                if print_debug:
-                    print(f"Righe dopo filtro orario: {len(df)} (rimosse {rows_before - len(df)})")
             
-            # FASE 4: Gestione delle date
-            if print_debug:
-                print("Gestione delle date...")
-            
+            # Gestione delle date
             if 'Data' in df.columns:
-                if print_debug:
-                    print(f"Tipo della colonna Data prima della conversione: {df['Data'].dtype}")
-                    if len(df) > 0:
-                        print(f"Esempi valori Data: {df['Data'].head().tolist()}")
-                
                 # Converti le date in modo più robusto
-                # Nota: Con JSON, le date potrebbero già essere state parsate correttamente
+                # Con JSON, le date potrebbero già essere state parsate correttamente
                 try:
                     # Verifica se le date sono già in formato datetime
                     if not pd.api.types.is_datetime64_any_dtype(df['Data']):
@@ -179,16 +167,9 @@ def load_data() -> pd.DataFrame:
                         # Poi converti a datetime
                         df['Data'] = pd.to_datetime(df['Data'], errors='coerce')
                     
-                    if print_debug:
-                        print(f"Tipo della colonna Data dopo la conversione: {df['Data'].dtype}")
-                        if len(df) > 0:
-                            print(f"Esempi date convertite: {df['Data'].head().tolist()}")
-                    
                     # Rimuovi le righe con date non valide
                     rows_before = len(df)
                     df = df.dropna(subset=['Data'])
-                    if print_debug:
-                        print(f"Righe dopo rimozione date invalide: {len(df)} (rimosse {rows_before - len(df)})")
                     
                     # Estrai e aggiorna le colonne di Giorno, Mese e Anno in modo sicuro
                     if len(df) > 0:
@@ -196,20 +177,12 @@ def load_data() -> pd.DataFrame:
                             df['Giorno'] = df['Data'].dt.strftime('%A').str.capitalize()
                             df['Mese'] = df['Data'].dt.strftime('%B').str.capitalize()
                             df['Anno'] = df['Data'].dt.year.astype(str)
-                            if print_debug:
-                                print("Date elaborate con successo.")
-                        except Exception as date_comp_err:
-                            if print_debug:
-                                print(f"Errore durante l'estrazione dei componenti dalla data: {date_comp_err}")
-                            # Fallback: mantieni i valori esistenti o imposta valori predefiniti
-                except Exception as date_err:
-                    if print_debug:
-                        print(f"Errore durante la conversione delle date: {date_err}")
+                        except Exception:
+                            pass  # Mantieni i valori esistenti in caso di errore
+                except Exception:
+                    pass  # Gestito silenziosamente
             
-            # FASE 5: Gestione valori nulli
-            if print_debug:
-                print("Pulizia valori nulli e NaN...")
-            
+            # Gestione valori nulli
             # Sostituisci NaN con stringa vuota nelle colonne di testo
             for col in df.select_dtypes(include=['object']).columns:
                 df[col] = df[col].fillna('')
@@ -219,51 +192,38 @@ def load_data() -> pd.DataFrame:
                 df[col] = df[col].replace('nan', '')
                 df[col] = df[col].replace('None', '')
             
-            # FASE 6: Finalizzazione
-            if print_debug:
-                print(f"Dati JSON caricati con successo. Totale record: {len(df)}")
-            
-            # Calcola il totale dei CFU
-            total_cfu = 0
-            if 'CFU' in df.columns:
-                # Assicurati che tutti i valori CFU siano numerici
-                df['CFU'] = pd.to_numeric(df['CFU'], errors='coerce')
-                total_cfu = df['CFU'].fillna(0).sum()
-                
-                if print_debug:
-                    print(f"Totale CFU calcolati: {total_cfu}")
-            
-            # Aggiorna il conteggio dei record e dei CFU nella sessione
-            st.session_state['total_records'] = len(df)
-            st.session_state['total_cfu'] = total_cfu
-            
             return df
             
         except Exception as read_err:
             if log_available:
                 logger.error(f"Errore durante la lettura del file JSON: {read_err}")
-            if print_debug:
-                print(f"Errore lettura JSON: {read_err}")
+                logger.error(traceback.format_exc())
+            
+            if debug_container is not None:
+                debug_container.error(f"Errore durante la lettura del file JSON: {read_err}")
+                debug_container.error(traceback.format_exc())
+            elif print_debug:
+                print(f"Errore durante la lettura del file JSON: {read_err}")
+                print(traceback.format_exc())
+            
             return empty_df
     
     except Exception as e:
         # Cattura errori generali
         error_msg = f"Errore durante il caricamento dei dati: {e}"
         st.error(error_msg)
-        
-        import traceback
         error_details = traceback.format_exc()
         
         try:
             from log_utils import logger
             logger.error(error_msg)
-            logger.error(f"Dettaglio: {error_details}")
+            logger.error(error_details)
         except ImportError:
             pass
             
         if print_debug:
             print(error_msg)
-            print(f"Stack trace: {error_details}")
+            print(error_details)
         
         # Restituisci un DataFrame vuoto per permettere di continuare l'importazione
         return pd.DataFrame(columns=FULL_COLUMNS)
@@ -344,6 +304,7 @@ def save_data(df: pd.DataFrame, replace_file: bool = False) -> str:
     try:
         debug_container.text("Fase 1: Preparazione del DataFrame...")
         try:
+            from log_utils import logger
             logger.debug(f"DF info - shape: {df.shape}, columns: {list(df.columns)}")
             # Log dei primi record per debug
             logger.debug(f"Prime 3 righe del dataframe:\n{df.head(3)}")
@@ -434,7 +395,7 @@ def save_data(df: pd.DataFrame, replace_file: bool = False) -> str:
         # Rimuovi duplicati basati su colonne chiave
         pre_dedup = len(df)
         df = df.drop_duplicates(
-            subset=['Data', 'Orario', 'Docente', 'Denominazione Insegnamento'], 
+            subset=['Data', 'Orario', 'Docente', 'Denominazione Insegnamento', 'Insegnamento comune'], 
             keep='last'
         )
         post_dedup = len(df)
@@ -641,3 +602,5 @@ def save_data(df: pd.DataFrame, replace_file: bool = False) -> str:
 
 # La funzione delete_record è stata spostata in db_delete_operations.py
 from db_delete_operations import delete_record
+
+# Qui era presente il codice di delete_record che è stato spostato nel file db_delete_operations.py

@@ -1,7 +1,6 @@
 import pandas as pd
 import streamlit as st
 import traceback
-from data_utils import normalize_code
 
 
 def edit_record(df: pd.DataFrame, index: int) -> pd.DataFrame:
@@ -80,9 +79,6 @@ def edit_record(df: pd.DataFrame, index: int) -> pd.DataFrame:
                 index=get_pef_index(record.get("PeF30 art.13", "")),
                 key=f"pef30_art13_{index}"
             )
-            codice_input = st.text_input(
-                "Codice insegnamento", value=record.get("Codice insegnamento", ""), key=f"codice_{index}"
-            )
             denominazione_input = st.text_input(
                 "Denominazione Insegnamento", value=record.get("Denominazione Insegnamento", ""), key=f"denominazione_{index}"
             )
@@ -108,7 +104,6 @@ def edit_record(df: pd.DataFrame, index: int) -> pd.DataFrame:
                 "PeF30 all.2": pef30_all2_input,
                 "PeF36 all.5": pef36_input,
                 "PeF30 art.13": pef30_art13_input,
-                "Codice insegnamento": normalize_code(codice_input),
                 "Denominazione Insegnamento": denominazione_input,
                 "Docente": docente_input,
                 "Aula": aula_input,

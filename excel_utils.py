@@ -15,7 +15,7 @@ from datetime import datetime
 # Importa le costanti necessarie dal modulo file_utils
 from file_utils import (
     BASE_COLUMNS, FULL_COLUMNS, DATA_FOLDER,
-    setup_locale, normalize_code
+    setup_locale
 )
 
 def process_excel_upload(uploaded_file, debug_container=None) -> pd.DataFrame:
@@ -113,8 +113,7 @@ def process_excel_upload(uploaded_file, debug_container=None) -> pd.DataFrame:
             'Aula': str,
             'Link Teams': str,
             'Note': str,
-            'CFU': str,  # Leggi come stringa per gestire virgole/punti
-            'Codice insegnamento': str # Leggi come stringa per preservare formati
+            'CFU': str  # Leggi come stringa per gestire virgole/punti
         }
         # Assicurati che tutte le colonne base siano definite
         for col in BASE_COLUMNS:
@@ -242,7 +241,6 @@ def process_excel_upload(uploaded_file, debug_container=None) -> pd.DataFrame:
             'PeF30 all.2': ['pef30 all.2', 'pef30', 'all.2', 'allegato 2'],
             'PeF36 all.5': ['pef36 all.5', 'pef36', 'all.5', 'allegato 5'],
             'PeF30 art.13': ['pef30 art.13', 'art.13', 'articolo 13'],
-            'Codice insegnamento': ['codice insegnamento', 'codice', 'code', 'id corso', 'id insegnamento', 'course code'],
             'Denominazione Insegnamento': ['denominazione insegnamento', 'denominazione', 'insegnamento', 'materia', 'corso', 'subject', 'course'],
             'Docente': ['docente', 'prof', 'professore', 'teacher', 'instructor'],
             'Aula': ['aula', 'room', 'classe', 'class', 'location'],
@@ -688,16 +686,7 @@ def process_excel_upload(uploaded_file, debug_container=None) -> pd.DataFrame:
             # Log dei valori CFU finali
             debug_container.info(f"Valori CFU elaborati. Range: {df['CFU'].min()} - {df['CFU'].max()}, Media: {df['CFU'].mean():.2f}")
 
-        # Gestisci Codice insegnamento (rimuovi .0 se presente) con gestione più robusta
-        if 'Codice insegnamento' in df.columns:
-            # Converti in stringa e gestisci valori nulli
-            df['Codice insegnamento'] = df['Codice insegnamento'].fillna('').astype(str)
-            # Rimuovi .0 alla fine dei codici numerici
-            df['Codice insegnamento'] = df['Codice insegnamento'].apply(normalize_code)
-            # Rimuovi spazi extra all'inizio e alla fine
-            df['Codice insegnamento'] = df['Codice insegnamento'].str.strip()
-
-        # Sistema intelligente di validazione e rilevamento degli errori
+                # Sistema intelligente di validazione e rilevamento degli errori
         validation_issues = {
             'missing_fields': [],      # Campi obbligatori mancanti
             'format_issues': [],       # Problemi di formato (es. orario)
@@ -1006,7 +995,6 @@ def create_sample_excel():
             'PeF30 all.2': 'D',
             'PeF36 all.5': 'D',
             'PeF30 art.13': 'D',
-            'Codice insegnamento': '22911105',
             'Denominazione Insegnamento': 'Pedagogia generale e interculturale',
             'Docente': 'Scaramuzzo Gilberto',
             'Aula': '',
@@ -1026,7 +1014,6 @@ def create_sample_excel():
             'PeF30 all.2': 'P',
             'PeF36 all.5': 'P',
             'PeF30 art.13': 'D',
-            'Codice insegnamento': '22910050',
             'Denominazione Insegnamento': 'Didattica della psicologia',
             'Docente': 'Vecchio Giovanni Maria',
             'Aula': 'aula 15 Via Principe Amedeo, 182/b',

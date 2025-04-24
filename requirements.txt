@@ -6,4 +6,3 @@ python-dotenv
 bcrypt
 xlsxwriter
 numpy
-#traceback

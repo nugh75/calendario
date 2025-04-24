@@ -12,7 +12,6 @@ from typing import Union, Tuple, Dict, Any, List, Optional
 
 # Importa utility per date e dati
 from date_utils import setup_locale, format_date, parse_date
-from data_utils import normalize_code
 
 # Costanti per i file
 DATA_FOLDER = 'dati'
@@ -155,10 +154,6 @@ def load_data(file_path=None, debug_container=None, print_debug=False) -> pd.Dat
             if 'Orario' in df.columns:
                 rows_before = len(df)
                 df = df[df['Orario'].notna() & (df['Orario'] != '')]
-            
-            # Normalizza i codici insegnamento
-            if 'Codice insegnamento' in df.columns:
-                df['Codice insegnamento'] = df['Codice insegnamento'].apply(lambda x: normalize_code(x) if pd.notna(x) else '')
             
             # Gestione delle date
             if 'Data' in df.columns:
@@ -407,8 +402,6 @@ def save_data(df: pd.DataFrame, replace_file: bool = False) -> str:
         debug_container.text(f"Duplicati rimossi: {pre_dedup - post_dedup}")
             
         # Normalizza i codici insegnamento
-        if 'Codice insegnamento' in df.columns:
-            df['Codice insegnamento'] = df['Codice insegnamento'].apply(normalize_code)
 
         # Ordina il dataframe per data e orario in modo robusto
         debug_container.text("Fase 7: Ordinamento dei dati...")

@@ -93,7 +93,6 @@ def init_db():
             pef30_all2 TEXT,
             pef36_all5 TEXT,
             pef30_art13 TEXT,
-            codice_insegnamento TEXT,
             denominazione_insegnamento TEXT NOT NULL,
             docente_id INTEGER NOT NULL,
             aula TEXT,
@@ -161,7 +160,6 @@ def load_data() -> pd.DataFrame:
             l.pef30_all2 as "PeF30 all.2", 
             l.pef36_all5 as "PeF36 all.5", 
             l.pef30_art13 as "PeF30 art.13", 
-            l.codice_insegnamento as "Codice insegnamento", 
             l.denominazione_insegnamento as "Denominazione Insegnamento", 
             doc.nome as "Docente", 
             l.aula as "Aula", 
@@ -343,7 +341,6 @@ def save_record(record_data: Dict) -> bool:
                 pef30_all2 = ?,
                 pef36_all5 = ?,
                 pef30_art13 = ?,
-                codice_insegnamento = ?,
                 denominazione_insegnamento = ?,
                 aula = ?,
                 link_teams = ?,
@@ -361,7 +358,6 @@ def save_record(record_data: Dict) -> bool:
                 record_data.get('PeF30 all.2', ''),
                 record_data.get('PeF36 all.5', ''),
                 record_data.get('PeF30 art.13', ''),
-                record_data.get('Codice insegnamento', ''),
                 record_data.get('Denominazione Insegnamento', ''),
                 record_data.get('Aula', ''),
                 record_data.get('Link Teams', ''),
@@ -378,10 +374,10 @@ def save_record(record_data: Dict) -> bool:
             cursor.execute('''
                 INSERT INTO lezioni (
                     data, orario, dipartimento_id, classe_concorso, insegnamento_comune,
-                    pef60, pef30_all2, pef36_all5, pef30_art13, codice_insegnamento,
+                    pef60, pef30_all2, pef36_all5, pef30_art13, 
                     denominazione_insegnamento, docente_id, aula, link_teams, cfu,
                     note, giorno, mese, anno
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 data_str, 
                 orario,
@@ -392,7 +388,6 @@ def save_record(record_data: Dict) -> bool:
                 record_data.get('PeF30 all.2', ''),
                 record_data.get('PeF36 all.5', ''),
                 record_data.get('PeF30 art.13', ''),
-                record_data.get('Codice insegnamento', ''),
                 record_data.get('Denominazione Insegnamento', ''),
                 docente_id,
                 record_data.get('Aula', ''),
@@ -489,7 +484,6 @@ def update_record(record_data: dict) -> bool:
             pef30_all2 = ?,
             pef36_all5 = ?,
             pef30_art13 = ?,
-            codice_insegnamento = ?,
             denominazione_insegnamento = ?,
             aula = ?,
             link_teams = ?,
@@ -507,7 +501,6 @@ def update_record(record_data: dict) -> bool:
             record_data.get('PeF30 all.2', ''),
             record_data.get('PeF36 all.5', ''),
             record_data.get('PeF30 art.13', ''),
-            record_data.get('Codice insegnamento', ''),
             record_data.get('Denominazione Insegnamento', ''),
             record_data.get('Aula', ''),
             record_data.get('Link Teams', ''),
